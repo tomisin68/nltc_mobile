@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "267993935158",
+    "firebase_url": "https://nltc-online-default-rtdb.firebaseio.com",
+    "project_id": "nltc-online",
+    "storage_bucket": "nltc-online.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:267993935158:android:942314ed079c8786bc9797",
+        "android_client_info": {
+          "package_name": "ng.com.nltc"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "267993935158-l0ojgokoj1005gohfganoii75ehq4c47.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB7cackZaRcuLLDcsS_1Ttutowv8DHkypE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "267993935158-l0ojgokoj1005gohfganoii75ehq4c47.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "267993935158-6alrdtj8pcanc3bfu1dq8a6mgqf0l1u0.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "ng.com.nltc"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(flutter build apk --release 2>&1)",
+      "PowerShell(Get-Process java,dart,gradle -ErrorAction SilentlyContinue | Select-Object Name,Id,@{n='CPU_s';e={[math]::Round\\($_.CPU,1\\)}},@{n='MemMB';e={[math]::Round\\($_.WorkingSet64/1MB\\)}} | Format-Table -AutoSize)",
+      "PowerShell($root='c:\\\\Users\\\\Admin\\\\StudioProjects\\\\nltc_mobile'; Get-ChildItem $root -Force | Select-Object Name,LastWriteTime | Format-Table -AutoSize; 'ANDROID:'; Get-ChildItem \"$root\\\\android\" -Force -ErrorAction SilentlyContinue | Select-Object Name,LastWriteTime | Format-Table -AutoSize)",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" | Select-Object ProcessId,@{n='Cmd';e={$_.CommandLine.Substring\\(0,[Math]::Min\\(220,$_.CommandLine.Length\\)\\)}} | Format-List)",
+      "PowerShell(Get-Date -Format 'HH:mm:ss'; 'RECENT WRITES under android\\\\build:'; Get-ChildItem 'c:\\\\Users\\\\Admin\\\\StudioProjects\\\\nltc_mobile\\\\android\\\\build' -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 6 LastWriteTime,FullName | Format-Table -AutoSize; 'GRADLE DISTS:'; Get-ChildItem \"$env:USERPROFILE\\\\.gradle\\\\wrapper\\\\dists\" -ErrorAction SilentlyContinue | Select-Object Name,LastWriteTime)",
+      "PowerShell($ids=@\\(28900,31448,29940\\); $a=@{}; foreach\\($i in $ids\\){ $p=Get-Process -Id $i -EA SilentlyContinue; if\\($p\\){$a[$i]=$p.CPU} }; Start-Sleep -Seconds 12; foreach\\($i in $ids\\){ $p=Get-Process -Id $i -EA SilentlyContinue; if\\($p\\){ \"{0,-7} {1,-22} CPU delta over 12s: {2}s\" -f $i,$p.Name,[math]::Round\\($p.CPU-$a[$i],2\\) } else { \"$i  GONE\" } })",
+      "PowerShell('--- gradle module cache, newest files ---'; Get-ChildItem \"$env:USERPROFILE\\\\.gradle\\\\caches\\\\modules-2\\\\files-2.1\" -Recurse -File -EA SilentlyContinue | Sort-Object LastWriteTime -Desc | Select-Object -First 8 LastWriteTime,Name | Format-Table -AutoSize)",
+      "PowerShell(Get-NetTCPConnection -OwningProcess 28900 -EA SilentlyContinue | Where-Object State -eq 'Established' | Select-Object RemoteAddress,RemotePort,State | Format-Table -AutoSize; '--- daemon 28900 threads/handles ---'; Get-Process -Id 28900 | Select-Object Threads,Handles | ForEach-Object { \"threads=$\\($_.Threads.Count\\) handles=$\\($_.Handles\\)\" })",
+      "Bash(unzip -l build/app/outputs/flutter-apk/app-release.apk)",
+      "Bash(sort -k1 -n -r)",
+      "Bash(curl -s -o /dev/null -w \"health: %{http_code} in %{time_total}s\\\\n\" https://nltc-backend.onrender.com/api/health)",
+      "Bash(curl -s -X POST -H \"Content-Type: application/json\" -d '{\"channelName\":\"test_channel\",\"role\":\"audience\"}' -w \"\\\\ntoken\\(no auth\\): %{http_code}\\\\n\" https://nltc-backend.onrender.com/api/agora/token)",
+      "Bash(adb devices *)",
+      "PowerShell($adb = \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; if \\(Test-Path $adb\\) { & $adb devices -l } else { \"not at $adb\"; Get-ChildItem \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name })",
+      "Bash(node -e ' *)"
+    ]
+  }
+}
