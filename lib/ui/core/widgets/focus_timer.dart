@@ -287,6 +287,11 @@ class _FocusTimerState extends State<FocusTimer> with WidgetsBindingObserver {
   void _openSheet() {
     showModalBottomSheet<void>(
       context: context,
+      // Without this the sheet is capped at 9/16 of the screen, and the preset
+      // grid overflows the moment the handset is short or the system font is
+      // scaled up — the clock and the Start button simply fall off the bottom
+      // with nothing to scroll.
+      isScrollControlled: true,
       builder: (sheetContext) => _FocusSheet(
         remaining: _remaining,
         idle: _idle,
@@ -419,143 +424,153 @@ class _FocusSheetState extends State<_FocusSheet> {
     final shown = widget.idle ? _minutes * 60 : widget.remaining;
 
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          Tokens.s5,
-          Tokens.s2,
-          Tokens.s5,
-          Tokens.s5,
+      child: ConstrainedBox(
+        // Tall enough for the whole picker on a normal handset, and bounded so
+        // the scroll view below always has somewhere to scroll to on a short
+        // one.
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.timer_outlined, size: 15, color: scheme.primary),
-                const SizedBox(width: 7),
-                Text(
-                  'Focus timer',
-                  style: GoogleFonts.fraunces(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: scheme.onSurface,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: Tokens.s3),
-
-            // The clock, with a stepper either side of it while idle: the range
-            // is wider than any list of chips, and nudging the number is the
-            // shortest path to a block nobody thought to offer.
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (widget.idle)
-                  _StepButton(
-                    icon: Icons.remove_rounded,
-                    tooltip: 'Less time',
-                    onTap: _minutes <= widget.minMinutes
-                        ? null
-                        : () => _choose(
-                              _minutes <= widget.step
-                                  ? widget.minMinutes
-                                  // Snap to the step rather than sliding off it,
-                                  // so 27 goes to 25 and not 22.
-                                  : (_minutes - 1) ~/ widget.step * widget.step,
-                            ),
-                  ),
-                Expanded(
-                  child: Text(
-                    _FocusTimerState._fmt(shown),
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.dmSans(
-                      fontSize: 44,
-                      fontWeight: FontWeight.w700,
-                      height: 1.1,
-                      color: scheme.primary,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+            Tokens.s5,
+            Tokens.s2,
+            Tokens.s5,
+            Tokens.s5,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.timer_outlined, size: 15, color: scheme.primary),
+                  const SizedBox(width: 7),
+                  Text(
+                    'Focus timer',
+                    style: GoogleFonts.fraunces(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: scheme.onSurface,
                     ),
                   ),
-                ),
-                if (widget.idle)
-                  _StepButton(
-                    icon: Icons.add_rounded,
-                    tooltip: 'More time',
-                    onTap: _minutes >= widget.maxMinutes
-                        ? null
-                        : () => _choose(
-                              (_minutes ~/ widget.step + 1) * widget.step,
-                            ),
-                  ),
-              ],
-            ),
+                ],
+              ),
+              const SizedBox(height: Tokens.s3),
 
-            if (widget.idle) ...[
-              const SizedBox(height: Tokens.s4),
-              Wrap(
-                spacing: 7,
-                runSpacing: 7,
-                alignment: WrapAlignment.center,
+              // The clock, with a stepper either side of it while idle: the
+              // range is wider than any list of chips, and nudging the number is
+              // the shortest path to a block nobody thought to offer.
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  for (final minutes in widget.presets)
-                    _PresetChip(
-                      minutes: minutes,
-                      selected: _minutes == minutes,
-                      onTap: () => _choose(minutes),
+                  if (widget.idle)
+                    _StepButton(
+                      icon: Icons.remove_rounded,
+                      tooltip: 'Less time',
+                      onTap: _minutes <= widget.minMinutes
+                          ? null
+                          : () => _choose(
+                                _minutes <= widget.step
+                                    ? widget.minMinutes
+                                    // Snap to the step rather than sliding off
+                                    // it, so 27 goes to 25 and not 22.
+                                    : (_minutes - 1) ~/
+                                        widget.step *
+                                        widget.step,
+                              ),
+                    ),
+                  Expanded(
+                    child: Text(
+                      _FocusTimerState._fmt(shown),
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.dmSans(
+                        fontSize: 44,
+                        fontWeight: FontWeight.w700,
+                        height: 1.1,
+                        color: scheme.primary,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                  if (widget.idle)
+                    _StepButton(
+                      icon: Icons.add_rounded,
+                      tooltip: 'More time',
+                      onTap: _minutes >= widget.maxMinutes
+                          ? null
+                          : () => _choose(
+                                (_minutes ~/ widget.step + 1) * widget.step,
+                              ),
                     ),
                 ],
               ),
-              const SizedBox(height: Tokens.s4),
-            ],
 
-            Row(
-              children: [
-                if (widget.idle)
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: widget.onStart,
-                      icon: const Icon(Icons.play_arrow_rounded, size: 18),
-                      label: Text('Start $_minutes min'),
-                    ),
-                  ),
-                if (widget.running)
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: widget.onPause,
-                      icon: const Icon(Icons.pause_rounded, size: 18),
-                      label: const Text('Pause'),
-                    ),
-                  ),
-                if (widget.paused)
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: widget.onStart,
-                      icon: const Icon(Icons.play_arrow_rounded, size: 18),
-                      label: const Text('Resume'),
-                    ),
-                  ),
-                if (!widget.idle) ...[
-                  const SizedBox(width: Tokens.s2),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: widget.onReset,
-                      icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                      label: const Text('Reset'),
-                    ),
-                  ),
-                ],
+              if (widget.idle) ...[
+                const SizedBox(height: Tokens.s4),
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 7,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    for (final minutes in widget.presets)
+                      _PresetChip(
+                        minutes: minutes,
+                        selected: _minutes == minutes,
+                        onTap: () => _choose(minutes),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: Tokens.s4),
               ],
-            ),
-            const SizedBox(height: Tokens.s3),
-            Text(
-              'Pick a block, start, then go practise. The timer keeps running '
-              "while you study — we'll let you know when time's up.",
-              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          ],
+
+              Row(
+                children: [
+                  if (widget.idle)
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: widget.onStart,
+                        icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                        label: Text('Start $_minutes min'),
+                      ),
+                    ),
+                  if (widget.running)
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: widget.onPause,
+                        icon: const Icon(Icons.pause_rounded, size: 18),
+                        label: const Text('Pause'),
+                      ),
+                    ),
+                  if (widget.paused)
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: widget.onStart,
+                        icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                        label: const Text('Resume'),
+                      ),
+                    ),
+                  if (!widget.idle) ...[
+                    const SizedBox(width: Tokens.s2),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: widget.onReset,
+                        icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                        label: const Text('Reset'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: Tokens.s3),
+              Text(
+                'Pick a block, start, then go practise. The timer keeps running '
+                "while you study — we'll let you know when time's up.",
+                style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ],
+          ),
         ),
       ),
     );

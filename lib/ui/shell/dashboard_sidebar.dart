@@ -374,7 +374,12 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final photo = profile?.photoUrl;
+    // `avatarUrl`, not `photoUrl`: the picture a student uploads on the profile
+    // screen lands in `profileImage`, and `photoURL` is only ever set for
+    // Google sign-ins. Reading the raw field left every email/password account
+    // — and everyone who had uploaded their own photo — on initials forever.
+    // This is what the web sidebar shows too (`userData.profileImage`).
+    final photo = profile?.avatarUrl;
 
     return Container(
       width: 36,
