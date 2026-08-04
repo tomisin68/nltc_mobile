@@ -96,7 +96,8 @@ class _HistoryRow extends StatelessWidget {
                   label: result.examLabel,
                   tone: switch (result.exam) {
                     'nltc_quiz' => BadgeTone.gold,
-                    'quick_test' || 'mock' || 'topic' => BadgeTone.teal,
+                    'quick_test' || 'mock' || 'topic' || 'custom' =>
+                      BadgeTone.teal,
                     _ => BadgeTone.navy,
                   },
                 ),

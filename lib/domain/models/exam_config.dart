@@ -47,6 +47,10 @@ class ExamSection {
 ///
 /// The keys are the `exam` values the backend records and the web sends, so a
 /// sitting taken in the app lands in the same bucket in exam history.
+///
+/// `custom` is the paper a student builds themselves — any number of subjects,
+/// their own question counts, their own clock. It carries no default duration
+/// because choosing one is the whole point of it.
 enum CbtExam {
   jamb('jamb', 'JAMB', 'English + 3 subjects · 2 hrs'),
   study('study', 'Study Mode', 'Instant answers & explanations'),
@@ -54,7 +58,8 @@ enum CbtExam {
   postUtme('postutme', 'Post UTME', '1 subject · 30 min'),
   topic('topic', 'Topic', 'Practice by topic'),
   bece('bece', 'BECE', 'Junior past questions'),
-  practice('practice', 'Practice', 'Your own settings');
+  practice('practice', 'Practice', 'Your own settings'),
+  custom('custom', 'Custom CBT', 'Your subjects · your clock');
 
   const CbtExam(this.id, this.label, this.description);
 

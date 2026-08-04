@@ -16,6 +16,7 @@ import '../core/widgets/skeleton.dart';
 import '../core/widgets/subject_grid.dart';
 import '../practice/exam_setup_sheet.dart';
 import '../practice/practice_screen.dart';
+import 'custom_setup_sheet.dart';
 import 'jamb_setup_sheet.dart';
 import 'widgets/history_list.dart';
 import 'widgets/mode_card.dart';
@@ -44,6 +45,12 @@ enum CbtMode {
     Icons.place_rounded,
     'Practice by specific topics',
     CbtExam.topic,
+  ),
+  custom(
+    'Custom CBT',
+    Icons.tune_rounded,
+    'Build your own paper',
+    CbtExam.custom,
   );
 
   const CbtMode(this.label, this.icon, this.description, this.exam);
@@ -127,9 +134,15 @@ class _CbtPracticeScreenState extends State<CbtPracticeScreen> {
         : _subjects;
 
     // JAMB is a four-subject paper, not a subject with settings, so it gets its
-    // own sheet rather than the single-subject one.
+    // own sheet rather than the single-subject one. Custom is multi-subject for
+    // the same reason — asking "which subject?" first would be the wrong
+    // question entirely.
     if (_mode == CbtMode.jamb) {
       showJambSetupSheet(context, catalogue);
+      return;
+    }
+    if (_mode == CbtMode.custom) {
+      showCustomSetupSheet(context, catalogue);
       return;
     }
 
@@ -208,8 +221,17 @@ class _CbtPracticeScreenState extends State<CbtPracticeScreen> {
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    icon: const Icon(Icons.play_arrow_rounded, size: 18),
-                    label: Text('Start ${_mode.label} Session'),
+                    icon: Icon(
+                      _mode == CbtMode.custom
+                          ? Icons.tune_rounded
+                          : Icons.play_arrow_rounded,
+                      size: 18,
+                    ),
+                    label: Text(
+                      _mode == CbtMode.custom
+                          ? 'Open Custom CBT Builder'
+                          : 'Start ${_mode.label} Session',
+                    ),
                   ),
                 ),
               ],

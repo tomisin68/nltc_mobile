@@ -23,7 +23,7 @@ class ExamResult {
   final int total;
 
   /// `jamb`, `waec`, `postutme`, `practice`, `nltc_quiz`, `quick_test`, `mock`,
-  /// `topic`, `bece`.
+  /// `topic`, `bece`, `custom`.
   final String? exam;
 
   final String? topic;
@@ -41,6 +41,7 @@ class ExamResult {
     'mock': 'Mock Exam',
     'topic': 'Topic Test',
     'bece': 'BECE',
+    'custom': 'Custom CBT',
   };
 
   String get examLabel =>
