@@ -4,6 +4,7 @@ import '../../domain/models/question.dart';
 import '../core/theme/app_palette.dart';
 import '../core/widgets/empty_state.dart';
 import 'widgets/option_tile.dart';
+import 'widgets/report_question_sheet.dart';
 
 /// Question-by-question review of a finished sitting.
 ///
@@ -16,6 +17,7 @@ class ExamReviewScreen extends StatefulWidget {
     required this.subject,
     required this.questions,
     required this.answers,
+    this.examMode = 'practice',
   });
 
   final String subject;
@@ -23,6 +25,10 @@ class ExamReviewScreen extends StatefulWidget {
 
   /// questionId → chosen option key. A missing entry means it was skipped.
   final Map<String, String> answers;
+
+  /// How the sitting was recorded — `'jamb'`, `'bece'`, `'mock'`. Rides along on
+  /// a reported question so the admin knows which paper it came off.
+  final String examMode;
 
   @override
   State<ExamReviewScreen> createState() => _ExamReviewScreenState();
@@ -126,6 +132,8 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
                     number: number,
                     question: question,
                     chosen: widget.answers[question.id],
+                    subject: widget.subject,
+                    examMode: widget.examMode,
                   );
                 },
               ),
@@ -158,11 +166,15 @@ class _ReviewCard extends StatelessWidget {
     required this.number,
     required this.question,
     required this.chosen,
+    required this.subject,
+    required this.examMode,
   });
 
   final int number;
   final Question question;
   final String? chosen;
+  final String subject;
+  final String examMode;
 
   @override
   Widget build(BuildContext context) {
@@ -201,6 +213,17 @@ class _ReviewCard extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
+            ),
+            const Spacer(),
+            // Corrections are where a bad answer key gets caught — this is the
+            // first time the student sees the key at all — so the report button
+            // belongs here as much as it does in the exam hall.
+            ReportQuestionButton(
+              question: question,
+              subject: question.subject.isNotEmpty ? question.subject : subject,
+              examMode: examMode,
+              stage: 'review',
+              dense: true,
             ),
           ],
         ),

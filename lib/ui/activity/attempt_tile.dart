@@ -118,6 +118,7 @@ Future<void> openAttemptReview(BuildContext context, ExamAttempt attempt) async 
         subject: attempt.subject,
         questions: questions,
         answers: attempt.answers,
+        examMode: attempt.exam,
       ),
     ),
   );

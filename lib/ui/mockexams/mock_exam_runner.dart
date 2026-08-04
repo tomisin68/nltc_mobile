@@ -126,6 +126,7 @@ abstract final class MockExamRunner {
           subject: exam.title,
           questions: questions,
           answers: answers,
+          examMode: 'mock',
         ),
       ),
     );

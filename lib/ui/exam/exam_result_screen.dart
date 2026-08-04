@@ -407,6 +407,7 @@ class _ExamResultScreenState extends State<ExamResultScreen> {
                     subject: config.subject,
                     questions: widget.questions,
                     answers: widget.answers,
+                    examMode: config.exam,
                   ),
                 ),
               ),

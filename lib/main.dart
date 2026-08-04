@@ -16,6 +16,7 @@ import 'data/repositories/mock_exam_repository.dart';
 import 'data/repositories/notification_repository.dart';
 import 'data/repositories/presence_repository.dart';
 import 'data/repositories/profile_repository.dart';
+import 'data/repositories/question_report_repository.dart';
 import 'data/repositories/question_repository.dart';
 import 'data/repositories/schedule_repository.dart';
 import 'data/repositories/study_note_repository.dart';
@@ -109,6 +110,12 @@ class NltcApp extends StatelessWidget {
         ),
         Provider<QuestionRepository>(
           create: (context) => QuestionRepository(local: context.read()),
+        ),
+        // One instance for the whole app on purpose: it remembers which
+        // questions have already been reported, so the hall and the corrections
+        // screen agree about what the student has already told us.
+        Provider<QuestionReportRepository>(
+          create: (_) => QuestionReportRepository(),
         ),
         Provider<ProfileRepository>(create: (_) => ProfileRepository()),
         Provider<PresenceRepository>(create: (_) => PresenceRepository()),

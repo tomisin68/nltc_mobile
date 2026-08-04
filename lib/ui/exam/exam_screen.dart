@@ -16,6 +16,7 @@ import '../core/widgets/question_body.dart';
 import 'exam_result_screen.dart';
 import 'question_palette.dart';
 import 'widgets/option_tile.dart';
+import 'widgets/report_question_sheet.dart';
 
 /// The CBT runner.
 ///
@@ -677,6 +678,19 @@ class _QuestionPage extends StatelessWidget {
                     foregroundColor: scheme.onSurfaceVariant,
                   ),
                 ),
+              // Reporting a bad question, as opposed to flagging a hard one to
+              // come back to. The same button is on the corrections screen,
+              // where a wrong answer key is far easier to spot.
+              ReportQuestionButton(
+                question: question,
+                // The question's own subject, not the page's: a PageView builds
+                // its neighbours, so the tile being reported is not always the
+                // one the controller's index is pointing at.
+                subject: question.subject.isNotEmpty
+                    ? question.subject
+                    : controller.config.subject,
+                examMode: controller.config.exam,
+              ),
             ],
           ),
         ),

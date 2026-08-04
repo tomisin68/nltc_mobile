@@ -566,6 +566,7 @@ class _OfficialQuizScreenState extends State<OfficialQuizScreen>
                     for (var i = 0; i < _questions.length; i++)
                       if (_answers[i] != null) _questions[i].id: _answers[i]!,
                   },
+                  examMode: 'quiz',
                 ),
               ),
             ),
