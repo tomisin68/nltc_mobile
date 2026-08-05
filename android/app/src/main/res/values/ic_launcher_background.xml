@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The lockup's wordmark is black ink; it needs paper behind it in both
+         the day and night launcher. -->
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>

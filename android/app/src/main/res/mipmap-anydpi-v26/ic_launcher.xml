@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8+ masks the launcher icon to whatever shape the device uses, so
+     the mark ships as a foreground layer inset inside the 72dp safe zone over
+     a plain plate. Without this the legacy ic_launcher.png gets shrunk and
+     shadowed, which crushes the wordmark. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
