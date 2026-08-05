@@ -11,6 +11,7 @@ import '../core/state/dashboard_controller.dart';
 import '../core/state/notification_controller.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
+import '../core/widgets/brand_mark.dart';
 import '../core/widgets/ruled_paper.dart';
 import '../support/support_sheet.dart';
 
@@ -234,51 +235,16 @@ class _Brand extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
     return Column(
       children: [
         Padding(
           // `.ds-brand` — the 26px left inset clears the margin rule.
           padding: const EdgeInsets.only(left: 26, right: 20, top: 16, bottom: 13),
-          child: Row(
-            children: [
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(9),
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [BlueprintPalette.b600, BlueprintPalette.b400],
-                  ),
-                ),
-                alignment: Alignment.center,
-                child: const Text(
-                  'N',
-                  style: TextStyle(
-                    color: BlueprintPalette.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    height: 1,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  'NLTC Online',
-                  style: GoogleFonts.fraunces(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.3,
-                    color: scheme.onSurface,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
+          child: const Align(
+            alignment: Alignment.centerLeft,
+            // The lockup carries the wordmark itself, so the rail shows the
+            // logo alone the way `.ds-brand-img` does on the web.
+            child: BrandMark(height: 46),
           ),
         ),
         const _DashedDivider(),

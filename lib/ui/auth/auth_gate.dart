@@ -43,7 +43,7 @@ class _SplashScreen extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const BrandMark(size: 72),
+              const BrandMark(height: 104),
               const SizedBox(height: Tokens.s8),
               SizedBox(
                 width: 24,

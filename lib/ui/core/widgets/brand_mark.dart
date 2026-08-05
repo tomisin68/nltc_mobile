@@ -1,75 +1,33 @@
 import 'package:flutter/material.dart';
 
-import '../theme/app_palette.dart';
-
-/// The NLTC logo lockup — a gradient tile plus the wordmark.
+/// The path of the logo render that reads against the current theme.
 ///
-/// Colours come from the scheme rather than the raw palette so the mark stays
-/// legible in dark mode instead of sitting as a bright slab on a navy surface.
-class BrandMark extends StatelessWidget {
-  const BrandMark({super.key, this.size = 56, this.showWordmark = true});
+/// The mark is flat ink with no outline, so it ships as two files rather than
+/// one tinted image: the navy artwork would sink into a dark surface, and the
+/// white one would disappear on paper.
+String brandAssetFor(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+        ? 'assets/nltc-light.png'
+        : 'assets/nltc-dark.png';
 
-  final double size;
-  final bool showWordmark;
+/// The NLTC Online logo lockup — the open-book mark above the wordmark.
+class BrandMark extends StatelessWidget {
+  const BrandMark({super.key, this.height = 84});
+
+  /// Sized by height: the lockup is taller than it is wide, so its width
+  /// follows from the artwork.
+  final double height;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
-
-    final tile = Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(size * 0.28),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [scheme.primary, scheme.secondary],
-        ),
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        'N',
-        style: TextStyle(
-          color: scheme.onPrimary,
-          fontSize: size * 0.5,
-          fontWeight: FontWeight.w800,
-          height: 1,
-        ),
-      ),
-    );
-
-    if (!showWordmark) return Semantics(label: 'NLTC', child: tile);
-
     return Semantics(
       label: 'NLTC Online',
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          tile,
-          const SizedBox(width: Tokens.s3),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'NLTC',
-                style: text.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              Text(
-                'Online',
-                style: text.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                  letterSpacing: 3.2,
-                ),
-              ),
-            ],
-          ),
-        ],
+      image: true,
+      child: Image.asset(
+        brandAssetFor(context),
+        height: height,
+        fit: BoxFit.contain,
+        excludeFromSemantics: true,
       ),
     );
   }
