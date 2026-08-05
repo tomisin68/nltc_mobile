@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../data/repositories/billing_repository.dart';
 import '../../data/repositories/profile_repository.dart';
+import '../../data/services/api_client.dart' show ApiException;
 import '../../domain/models/access_state.dart';
 import '../../domain/models/app_user.dart';
 import '../core/state/session_controller.dart';
@@ -80,8 +81,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _state = nigerianStates.contains(profile.state)
         ? profile.state!
         : nigerianStates.first;
-    _targetExam =
-        _exams.contains(profile.targetExam) ? profile.targetExam! : _exams.first;
+    // Kept verbatim, even when this screen has no option for it. A junior's
+    // `BECE (JSS)` is not in [_exams], and coercing it to the first senior exam
+    // meant saving the profile silently moved them onto the senior track — and
+    // so onto the senior fee list. Changing level goes through the upgrade card,
+    // which also resets the lesson fee.
+    _targetExam = profile.targetExam ?? _exams.first;
     _studentMode = profile.studentMode;
     _centreId = profile.center;
   }
@@ -116,14 +121,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<ClassOffering> get _myClasses {
     final isJunior =
         context.read<SessionController>().profile?.isJunior ?? false;
-    return _classes
-        .where(
-          (c) => c.appliesTo(
-            isPhysical: _studentMode == 'physical',
-            isJunior: isJunior,
-          ),
-        )
-        .toList();
+    return filterClassesForStudent(
+      _classes,
+      isPhysical: _studentMode == 'physical',
+      isJunior: isJunior,
+    );
+  }
+
+  /// The chosen fee, but only while it is still one this student may pay for.
+  ///
+  /// The list is filtered against a profile that can arrive after the classes
+  /// do, and against a toggle the student can move afterwards. Reading the
+  /// selection back out of the filtered list means neither can leave a fee from
+  /// another level or study mode sitting behind the Pay button.
+  ClassOffering? get _payableSelection {
+    final id = _selectedClass?.id;
+    if (id == null) return null;
+    for (final offering in _myClasses) {
+      if (offering.id == id) return offering;
+    }
+    return null;
   }
 
   /// Keeps the selection valid as the filtered list changes, and auto-picks when
@@ -162,7 +179,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'lastName': _lastName.text.trim(),
         'phone': _phone.text.trim(),
         'state': _state,
-        'targetExam': _targetExam,
+        // Only when this screen could actually offer it — see _hydrate.
+        if (_exams.contains(_targetExam)) 'targetExam': _targetExam,
         'studentMode': _studentMode,
         if (_studentMode == 'physical') 'center': _centreId ?? '',
         if (_parentEmail.text.trim().isNotEmpty)
@@ -191,7 +209,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final uid = session.account?.uid;
     if (uid == null) return;
 
-    final chosen = _selectedClass;
+    final chosen = _payableSelection;
     if (lessonFee && chosen == null) {
       showToast('Please select a class first.', variant: ToastVariant.error);
       return;
@@ -261,7 +279,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             variant: ToastVariant.error,
           );
       }
-    } catch (e) {
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // The backend refuses a checkout for reasons the student can act on — the
+      // class was closed, or it has no price set. Replacing all of them with
+      // "please try again" turned those into a button that silently did nothing.
+      showToast(e.message, variant: ToastVariant.error);
+    } catch (_) {
       if (!mounted) return;
       showToast(
         'Could not start the payment. Please try again.',
@@ -430,16 +454,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onChanged: (value) => setState(() => _state = value ?? _state),
               ),
               const SizedBox(height: Tokens.s4),
-              ProfileDropdown<String>(
-                label: 'Target exam',
-                value: _targetExam,
-                items: [
-                  for (final exam in _exams)
-                    DropdownMenuItem(value: exam, child: Text(exam)),
-                ],
-                onChanged: (value) =>
-                    setState(() => _targetExam = value ?? _targetExam),
-              ),
+              if (_exams.contains(_targetExam))
+                ProfileDropdown<String>(
+                  label: 'Target exam',
+                  value: _targetExam,
+                  items: [
+                    for (final exam in _exams)
+                      DropdownMenuItem(value: exam, child: Text(exam)),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => _targetExam = value ?? _targetExam),
+                )
+              else
+                // A junior's exam has no entry here on purpose: picking a senior
+                // one from a dropdown would move their level without resetting
+                // the fee. The card at the top of this screen does both.
+                ProfileField(
+                  label: 'Target exam',
+                  initialValue: _targetExam,
+                  enabled: false,
+                  helper: 'Use “Upgrade to Senior Student” above to change this.',
+                ),
               const SizedBox(height: Tokens.s4),
               _StudentTypeToggle(
                 value: _studentMode,
@@ -501,7 +536,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             access: access,
             classes: _myClasses,
             loadingClasses: _loadingClasses,
-            selected: _selectedClass,
+            selected: _payableSelection,
             onSelect: (offering) => setState(() => _selectedClass = offering),
             busy: _checkingOut,
             onPay: () => _checkout(lessonFee: true),

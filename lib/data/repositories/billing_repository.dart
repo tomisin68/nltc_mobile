@@ -15,6 +15,7 @@ class ClassOffering {
     this.timing,
     this.audience,
     this.level,
+    this.active = true,
   });
 
   final String id;
@@ -34,21 +35,44 @@ class ClassOffering {
   /// `online`, `physical`, or null for both.
   final String? audience;
 
-  /// `junior`, `senior`, or null for both.
+  /// `junior`, `senior`, `both`, or null on a doc written before the field
+  /// existed.
   final String? level;
+
+  /// Whether an admin still has this fee open for payment.
+  ///
+  /// A deactivated class is refused by the backend at checkout, so listing one
+  /// only offers a student a button that cannot work.
+  final bool active;
+
+  static const _audiences = {'physical', 'online', 'both'};
+  static const _levels = {'junior', 'senior', 'both'};
+
+  /// Who this fee is for, inferred from [type] when an admin never set it.
+  ///
+  /// Docs written before `audience` existed carry only a `type`: `online` is an
+  /// online fee and every other type (morning, afternoon, evening, weekend) is a
+  /// centre one. Treating a missing field as "everybody" instead is what put the
+  /// centre's evening fees in front of online students.
+  String get resolvedAudience => _audiences.contains(audience)
+      ? audience!
+      : type == 'online'
+          ? 'online'
+          : 'physical';
+
+  /// The level this fee targets — legacy docs are shown to both rather than
+  /// hidden from everyone.
+  String get resolvedLevel => _levels.contains(level) ? level! : 'both';
 
   /// Whether this fee is one the given student should be shown.
   ///
-  /// Port of `filterClassesForStudent`: a class with no audience or level set
-  /// applies to everyone, which is how the older records behave.
+  /// Port of `classMatchesStudent`: `both` is the wildcard the admin console
+  /// writes, for each of the two fields independently.
   bool appliesTo({required bool isPhysical, required bool isJunior}) {
-    final wantedAudience = isPhysical ? 'physical' : 'online';
-    final wantedLevel = isJunior ? 'junior' : 'senior';
-    if (audience != null && audience != 'all' && audience != wantedAudience) {
-      return false;
-    }
-    if (level != null && level != 'all' && level != wantedLevel) return false;
-    return true;
+    final a = resolvedAudience;
+    final l = resolvedLevel;
+    return (a == 'both' || a == (isPhysical ? 'physical' : 'online')) &&
+        (l == 'both' || l == (isJunior ? 'junior' : 'senior'));
   }
 
   static String? _str(dynamic v) {
@@ -66,6 +90,9 @@ class ClassOffering {
         timing: _str(m['timing']),
         audience: _str(m['audience']),
         level: _str(m['level']),
+        // Only an explicit `false` closes a class: docs written before the
+        // toggle existed have no field at all and are still open.
+        active: m['active'] != false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -77,8 +104,26 @@ class ClassOffering {
         'timing': timing,
         'audience': audience,
         'level': level,
+        'active': active,
       };
 }
+
+/// The fees a student is allowed to pay, cheapest first.
+///
+/// Port of `filterClassesForStudent`: deactivated fees are dropped before
+/// targeting is considered, so a class an admin has closed is never offered.
+List<ClassOffering> filterClassesForStudent(
+  Iterable<ClassOffering> classes, {
+  required bool isPhysical,
+  required bool isJunior,
+}) =>
+    classes
+        .where(
+          (c) =>
+              c.active && c.appliesTo(isPhysical: isPhysical, isJunior: isJunior),
+        )
+        .toList()
+      ..sort((a, b) => a.price.compareTo(b.price));
 
 /// A row in the student's payment history.
 class PaymentRecord {
