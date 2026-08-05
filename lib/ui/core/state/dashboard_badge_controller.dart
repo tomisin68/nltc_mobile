@@ -33,7 +33,7 @@ class DashboardBadgeController extends ChangeNotifier {
   static const _livePollInterval = Duration(minutes: 2);
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _chatSub;
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _supportSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _supportSub;
   Timer? _liveTimer;
   String? _uid;
 
@@ -73,25 +73,30 @@ class DashboardBadgeController extends ChangeNotifier {
     _liveTimer = Timer.periodic(_livePollInterval, (_) => _pollLive());
   }
 
-  /// One document, watched for the whole session.
+  /// Unread replies summed across every conversation this student has open.
   ///
-  /// It lives here rather than in the help button itself because that button is
-  /// also drawn on the locked screen, and a student waiting on an answer about
-  /// their payment should see the reply land without opening anything.
+  /// Watched for the whole session rather than from the help button itself,
+  /// because that button is also drawn on the locked screen and a student
+  /// waiting on an answer about their payment should see the reply land
+  /// without opening anything. Queried on the `uid` field, not the document
+  /// id: a solved request stays solved and the next one is a new document.
   void _watchSupport(String uid) {
     _supportSub = _db
         .collection('supportThreads')
-        .doc(uid)
+        .where('uid', isEqualTo: uid)
         .snapshots()
         .listen(
       (snap) {
-        final raw = snap.data()?['unreadForStudent'];
-        final unread = raw is num ? raw.toInt() : 0;
-        if (unread == _supportUnread) return;
-        _supportUnread = unread;
+        var total = 0;
+        for (final doc in snap.docs) {
+          final raw = doc.data()['unreadForStudent'];
+          if (raw is num) total += raw.toInt();
+        }
+        if (total == _supportUnread) return;
+        _supportUnread = total;
         notifyListeners();
       },
-      // A student who has never asked for help has no document, and the rules
+      // A student who has never asked for help matches nothing, and the rules
       // reject the read outright before they do — neither is worth surfacing.
       onError: (_) {},
     );

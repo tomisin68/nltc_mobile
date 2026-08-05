@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/repositories/support_repository.dart';
 import '../../domain/models/support_thread.dart';
+import '../core/format.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
@@ -36,6 +37,18 @@ Future<void> showSupportSheet(BuildContext context) => showModalBottomSheet<void
       builder: (_) => const SupportSheet(),
     );
 
+/// Which of the sheet's three faces is showing.
+enum _SupportView {
+  /// The student's past conversations.
+  history,
+
+  /// The form that opens a new one.
+  compose,
+
+  /// One conversation, with its composer.
+  chat,
+}
+
 class SupportSheet extends StatefulWidget {
   const SupportSheet({super.key});
 
@@ -44,18 +57,30 @@ class SupportSheet extends StatefulWidget {
 }
 
 class _SupportSheetState extends State<SupportSheet> {
+  /// The new-request form and the in-chat composer keep separate drafts, so
+  /// starting a chat does not inherit half a sentence from the other one.
+  final _draft = TextEditingController();
   final _composer = TextEditingController();
   final _scroll = ScrollController();
 
   SupportTopic? _topic;
   bool _sending = false;
 
-  /// Cleared once the student has read whatever was waiting, so the badge is not
-  /// re-cleared on every rebuild of the stream.
-  bool _acknowledged = false;
+  _SupportView _view = _SupportView.compose;
+  String _activeId = '';
+
+  /// The landing view is picked once per opening, not on every snapshot —
+  /// otherwise solving a request would yank the student out of the chat they
+  /// are still reading.
+  bool _routed = false;
+
+  /// Threads whose replies have already been marked read, so the receipt is not
+  /// re-written on every rebuild of the stream.
+  final _acknowledged = <String>{};
 
   @override
   void dispose() {
+    _draft.dispose();
     _composer.dispose();
     _scroll.dispose();
     super.dispose();
@@ -76,10 +101,29 @@ class _SupportSheetState extends State<SupportSheet> {
         'Student';
   }
 
-  Future<void> _send(SupportThread? thread) async {
-    final body = _composer.text.trim();
+  void _openThread(String id) {
+    _composer.clear();
+    setState(() {
+      _activeId = id;
+      _view = _SupportView.chat;
+    });
+  }
+
+  void _startNewChat() {
+    _draft.clear();
+    setState(() {
+      _activeId = '';
+      _topic = null;
+      _view = _SupportView.compose;
+    });
+  }
+
+  /// The opening message — always a brand-new conversation.
+  Future<void> _startThread() async {
+    final body = _draft.text.trim();
     if (body.isEmpty || _sending) return;
-    if (thread == null && _topic == null) {
+    final topic = _topic;
+    if (topic == null) {
       showToast('Tell us what your issue is about first.',
           variant: ToastVariant.error);
       return;
@@ -90,39 +134,62 @@ class _SupportSheetState extends State<SupportSheet> {
 
     setState(() => _sending = true);
     try {
-      await repository.sendMessage(
+      final id = await repository.startThread(
         uid: _uid,
         profile: session.profile,
         email: session.account?.email ?? session.profile?.email ?? '',
         name: _name,
         text: body,
-        thread: thread,
-        topic: _topic,
+        topic: topic,
       );
-      _composer.clear();
+      _draft.clear();
       _topic = null;
+      if (mounted) _openThread(id);
       _scrollToEnd();
-    } on FirebaseException catch (error) {
-      showToast(
-        error.code == 'permission-denied'
-            // The same message the website shows, because it is the same cause:
-            // the rules block that carries /supportThreads has to be deployed
-            // before either surface can write one.
-            ? 'Support is not enabled yet — deploy the updated Firestore rules.'
-            : 'Could not send your message. Try again.',
-        variant: ToastVariant.error,
-      );
-    } catch (_) {
-      showToast('Could not send your message. Try again.',
-          variant: ToastVariant.error);
+    } catch (error) {
+      _failed(error);
     }
     if (mounted) setState(() => _sending = false);
   }
 
-  Future<void> _markSolved() async {
+  /// A follow-up inside a conversation that is already open.
+  Future<void> _send() async {
+    final body = _composer.text.trim();
+    if (body.isEmpty || _sending || _activeId.isEmpty) return;
+
+    setState(() => _sending = true);
     try {
-      await context.read<SupportRepository>().markSolved(_uid);
-      showToast('Marked as solved. Send a message any time to reopen it.',
+      await context.read<SupportRepository>().sendMessage(
+            threadId: _activeId,
+            uid: _uid,
+            name: _name,
+            text: body,
+          );
+      _composer.clear();
+      _scrollToEnd();
+    } catch (error) {
+      _failed(error);
+    }
+    if (mounted) setState(() => _sending = false);
+  }
+
+  void _failed(Object error) {
+    showToast(
+      error is FirebaseException && error.code == 'permission-denied'
+          // The same message the website shows, because it is the same cause:
+          // the rules block that carries /supportThreads has to be deployed
+          // before either surface can write one.
+          ? 'Support is not enabled yet — deploy the updated Firestore rules.'
+          : 'Could not send your message. Try again.',
+      variant: ToastVariant.error,
+    );
+  }
+
+  Future<void> _markSolved() async {
+    if (_activeId.isEmpty) return;
+    try {
+      await context.read<SupportRepository>().markSolved(_activeId);
+      showToast('Marked as solved. Start a new chat any time.',
           variant: ToastVariant.success);
     } catch (_) {
       showToast('Could not update this request.', variant: ToastVariant.error);
@@ -165,56 +232,93 @@ class _SupportSheetState extends State<SupportSheet> {
       clipBehavior: Clip.antiAlias,
       child: uid.isEmpty
           ? const Center(child: Text('Sign in to reach support.'))
-          : StreamBuilder<SupportThread?>(
-              stream: context.read<SupportRepository>().watchThread(uid),
+          : StreamBuilder<List<SupportThread>>(
+              stream: context.read<SupportRepository>().watchThreads(uid),
               builder: (context, snapshot) {
-                final thread = snapshot.data;
-                final loading = snapshot.connectionState ==
-                        ConnectionState.waiting &&
-                    !snapshot.hasData;
+                final threads = snapshot.data;
+                if (threads == null) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-                // Opening the panel is the same as reading the replies. Deferred
+                // Land in whatever is still waiting on somebody; if everything
+                // is settled, offer a fresh form rather than a closed chat.
+                if (!_routed) {
+                  _routed = true;
+                  final live = threads.where((t) => !t.isResolved).firstOrNull;
+                  if (live != null) {
+                    _activeId = live.id;
+                    _view = _SupportView.chat;
+                  }
+                }
+
+                final active = threads
+                    .where((t) => t.id == _activeId)
+                    .firstOrNull;
+                final inChat = _view == _SupportView.chat && active != null;
+
+                // Opening a chat is the same as reading its replies. Deferred
                 // off the build: it is a Firestore write, and the snapshot it
                 // causes would otherwise land mid-frame.
-                if (!_acknowledged && (thread?.unreadForStudent ?? 0) > 0) {
-                  _acknowledged = true;
+                if (inChat &&
+                    active.unreadForStudent > 0 &&
+                    _acknowledged.add(active.id)) {
                   final repository = context.read<SupportRepository>();
                   WidgetsBinding.instance.addPostFrameCallback(
-                    (_) => repository.markRead(uid),
+                    (_) => repository.markRead(active.id),
                   );
                 }
 
                 return Column(
                   children: [
-                    _Header(thread: thread, onSolved: _markSolved),
-                    Expanded(
-                      child: loading
-                          ? const Center(child: CircularProgressIndicator())
-                          : thread == null
-                              ? _FirstContact(
-                                  firstName: _name.split(' ').first,
-                                  topic: _topic,
-                                  onTopic: (t) => setState(() => _topic = t),
-                                  composer: _composer,
-                                  sending: _sending,
-                                  onSend: () => _send(null),
-                                  onCall: (tel) =>
-                                      _launch(Uri(scheme: 'tel', path: tel)),
-                                  onEmail: () => _launch(
-                                      Uri(scheme: 'mailto', path: _supportEmail)),
-                                  scroll: _scroll,
-                                )
-                              : _Conversation(
-                                  uid: uid,
-                                  resolved: thread.isResolved,
-                                  scroll: _scroll,
-                                ),
+                    _Header(
+                      view: _view,
+                      thread: inChat ? active : null,
+                      threadCount: threads.length,
+                      onBack: threads.isEmpty || _view == _SupportView.history
+                          ? null
+                          : () => setState(() => _view = _SupportView.history),
+                      onNew: _view == _SupportView.history ? _startNewChat : null,
+                      onSolved: _markSolved,
                     ),
-                    if (thread != null)
+                    Expanded(
+                      child: switch (_view) {
+                        _SupportView.history => _ThreadList(
+                            threads: threads,
+                            onOpen: _openThread,
+                            onNew: _startNewChat,
+                            scroll: _scroll,
+                          ),
+                        _SupportView.chat when inChat => _Conversation(
+                            threadId: active.id,
+                            resolved: active.isResolved,
+                            onNew: _startNewChat,
+                            scroll: _scroll,
+                          ),
+                        _ => _FirstContact(
+                            firstName: _name.split(' ').first,
+                            earlier: threads.length,
+                            onHistory: () =>
+                                setState(() => _view = _SupportView.history),
+                            topic: _topic,
+                            onTopic: (t) => setState(() => _topic = t),
+                            composer: _draft,
+                            sending: _sending,
+                            onSend: _startThread,
+                            onCall: (tel) =>
+                                _launch(Uri(scheme: 'tel', path: tel)),
+                            onEmail: () => _launch(
+                                Uri(scheme: 'mailto', path: _supportEmail)),
+                            scroll: _scroll,
+                          ),
+                      },
+                    ),
+                    // A solved chat is read-only: the next question opens a new
+                    // one, which is what the closing note offers.
+                    if (inChat && !active.isResolved)
                       _Composer(
                         controller: _composer,
                         sending: _sending,
-                        onSend: () => _send(thread),
+                        onSend: _send,
                       ),
                   ],
                 );
@@ -227,14 +331,35 @@ class _SupportSheetState extends State<SupportSheet> {
 // ─── Header ──────────────────────────────────────────────────────────────────
 
 class _Header extends StatelessWidget {
-  const _Header({required this.thread, required this.onSolved});
+  const _Header({
+    required this.view,
+    required this.thread,
+    required this.threadCount,
+    required this.onBack,
+    required this.onNew,
+    required this.onSolved,
+  });
 
+  final _SupportView view;
+
+  /// Non-null only while a conversation is on screen — it is what the status
+  /// chips describe.
   final SupportThread? thread;
+
+  final int threadCount;
+
+  /// Null when there is nothing to go back to.
+  final VoidCallback? onBack;
+
+  /// Null outside the history list, which is the only place it belongs.
+  final VoidCallback? onNew;
+
   final VoidCallback onSolved;
 
   @override
   Widget build(BuildContext context) {
     final resolved = thread?.isResolved ?? false;
+    final onHistory = view == _SupportView.history;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(Tokens.s4, Tokens.s3, Tokens.s2, Tokens.s3),
@@ -252,15 +377,24 @@ class _Header extends StatelessWidget {
         children: [
           Row(
             children: [
-              Container(
+              SizedBox(
                 width: 34,
                 height: 34,
-                decoration: BoxDecoration(
+                child: Material(
                   color: BlueprintPalette.white.withValues(alpha: 0.16),
                   borderRadius: BorderRadius.circular(Tokens.rSm),
+                  child: InkWell(
+                    onTap: onBack,
+                    borderRadius: BorderRadius.circular(Tokens.rSm),
+                    child: Icon(
+                      onBack == null
+                          ? Icons.headset_mic_rounded
+                          : Icons.chevron_left_rounded,
+                      size: onBack == null ? 18 : 22,
+                      color: BlueprintPalette.white,
+                    ),
+                  ),
                 ),
-                child: const Icon(Icons.headset_mic_rounded,
-                    size: 18, color: BlueprintPalette.white),
               ),
               const SizedBox(width: Tokens.s3),
               Expanded(
@@ -269,7 +403,7 @@ class _Header extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'NLTC Support',
+                      onHistory ? 'Your chats' : 'NLTC Support',
                       style: GoogleFonts.fraunces(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
@@ -277,7 +411,9 @@ class _Header extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      'We usually reply within a few hours',
+                      onHistory
+                          ? '$threadCount conversation${threadCount == 1 ? '' : 's'}'
+                          : 'We usually reply within a few hours',
                       style: TextStyle(
                         fontSize: 11.5,
                         color: BlueprintPalette.white.withValues(alpha: 0.8),
@@ -286,6 +422,19 @@ class _Header extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onNew != null)
+                TextButton.icon(
+                  onPressed: onNew,
+                  icon: const Icon(Icons.add_rounded, size: 15),
+                  label: const Text('New'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: BlueprintPalette.b800,
+                    backgroundColor: BlueprintPalette.white,
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w800),
+                  ),
+                ),
               IconButton(
                 onPressed: () => Navigator.of(context).maybePop(),
                 icon: const Icon(Icons.close_rounded,
@@ -371,11 +520,16 @@ class _HeaderChip extends StatelessWidget {
 
 // ─── First contact ───────────────────────────────────────────────────────────
 
-/// The form a student sees before they have a thread: pick a subject, say what
-/// happened, and — for anyone who would rather not type it — the phone numbers.
+/// The form that opens a conversation: pick a subject, say what happened, and —
+/// for anyone who would rather not type it — the phone numbers.
+///
+/// Shown on a student's very first visit and again every time they come back
+/// with nothing outstanding, which is what keeps one request per chat.
 class _FirstContact extends StatelessWidget {
   const _FirstContact({
     required this.firstName,
+    required this.earlier,
+    required this.onHistory,
     required this.topic,
     required this.onTopic,
     required this.composer,
@@ -387,6 +541,11 @@ class _FirstContact extends StatelessWidget {
   });
 
   final String firstName;
+
+  /// How many conversations this student already has. Zero on a first visit.
+  final int earlier;
+
+  final VoidCallback onHistory;
   final SupportTopic? topic;
   final ValueChanged<SupportTopic> onTopic;
   final TextEditingController composer;
@@ -399,6 +558,7 @@ class _FirstContact extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final returning = earlier > 0;
 
     return ListView(
       controller: scroll,
@@ -411,7 +571,7 @@ class _FirstContact extends StatelessWidget {
       ),
       children: [
         Text(
-          'Hi $firstName 👋',
+          returning ? 'Start a new chat' : 'Hi $firstName 👋',
           style: GoogleFonts.fraunces(
             fontSize: 18,
             fontWeight: FontWeight.w800,
@@ -420,15 +580,35 @@ class _FirstContact extends StatelessWidget {
         ),
         const SizedBox(height: Tokens.s2),
         Text(
-          'Something not working, a payment not showing, or a question about '
-          'your classes? Send us a message here and an admin will reply right '
-          'in this window.',
+          returning
+              ? 'Every question gets its own chat, so nothing gets lost in an '
+                  'old one. Tell us what this is about and an admin will reply '
+                  'right here.'
+              : 'Something not working, a payment not showing, or a question '
+                  'about your classes? Send us a message here and an admin will '
+                  'reply right in this window.',
           style: TextStyle(
             fontSize: 13,
             height: 1.6,
             color: scheme.onSurfaceVariant,
           ),
         ),
+        if (returning) ...[
+          const SizedBox(height: Tokens.s3),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: onHistory,
+              icon: const Icon(Icons.history_rounded, size: 15),
+              label: Text('See your past chats ($earlier)'),
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                textStyle:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: Tokens.s5),
         _Label('What is it about?'),
         const SizedBox(height: Tokens.s2),
@@ -629,17 +809,211 @@ class _ContactLink extends StatelessWidget {
   }
 }
 
+// ─── History ─────────────────────────────────────────────────────────────────
+
+/// Every conversation this student has had with the desk, newest first.
+///
+/// Solved requests are not deleted and not reopened — they sit here so a
+/// student can go back and read what they were told, which is most of the point
+/// of giving each request its own chat.
+class _ThreadList extends StatelessWidget {
+  const _ThreadList({
+    required this.threads,
+    required this.onOpen,
+    required this.onNew,
+    required this.scroll,
+  });
+
+  final List<SupportThread> threads;
+  final ValueChanged<String> onOpen;
+  final VoidCallback onNew;
+  final ScrollController scroll;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return ListView.separated(
+      controller: scroll,
+      padding: const EdgeInsets.all(Tokens.s4),
+      itemCount: threads.length + 1,
+      separatorBuilder: (_, _) => const SizedBox(height: Tokens.s2),
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onNew,
+              icon: const Icon(Icons.edit_note_rounded, size: 18),
+              label: const Text('Start a new chat'),
+            ),
+          );
+        }
+
+        final thread = threads[index - 1];
+        final done = thread.isResolved;
+
+        return Material(
+          color: scheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(Tokens.rMd),
+          child: InkWell(
+            onTap: () => onOpen(thread.id),
+            borderRadius: BorderRadius.circular(Tokens.rMd),
+            child: Container(
+              padding: const EdgeInsets.all(Tokens.s3),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(Tokens.rMd),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: done
+                          ? BlueprintPalette.successBg
+                          : scheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(Tokens.rSm),
+                    ),
+                    child: Icon(
+                      _iconFor(thread.topic),
+                      size: 16,
+                      color: done
+                          ? BlueprintPalette.success
+                          : scheme.onPrimaryContainer,
+                    ),
+                  ),
+                  const SizedBox(width: Tokens.s3),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                SupportTopic.labelFor(thread.topic),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                  color: scheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            if (thread.lastActivity != null)
+                              Text(
+                                relativeTime(thread.lastActivity!),
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          thread.lastMessageFromAdmin
+                              ? 'Support: ${thread.lastMessage ?? ''}'
+                              : thread.lastMessage ?? '—',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: Tokens.s2),
+                        Row(
+                          children: [
+                            _Pill(
+                              label: done ? 'Solved' : 'Open',
+                              background: done
+                                  ? BlueprintPalette.successBg
+                                  : scheme.primaryContainer,
+                              foreground: done
+                                  ? BlueprintPalette.success
+                                  : scheme.onPrimaryContainer,
+                            ),
+                            if (thread.unreadForStudent > 0) ...[
+                              const SizedBox(width: Tokens.s2),
+                              _Pill(
+                                label: '${thread.unreadForStudent} new',
+                                background: BlueprintPalette.error,
+                                foreground: BlueprintPalette.white,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static IconData _iconFor(String? id) {
+    for (final topic in SupportTopic.values) {
+      if (topic.id == id) return topic.icon;
+    }
+    return Icons.chat_bubble_rounded;
+  }
+}
+
+class _Pill extends StatelessWidget {
+  const _Pill({
+    required this.label,
+    required this.background,
+    required this.foreground,
+  });
+
+  final String label;
+  final Color background;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(100),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            color: foreground,
+          ),
+        ),
+      );
+}
+
 // ─── Conversation ────────────────────────────────────────────────────────────
 
 class _Conversation extends StatelessWidget {
   const _Conversation({
-    required this.uid,
+    required this.threadId,
     required this.resolved,
+    required this.onNew,
     required this.scroll,
   });
 
-  final String uid;
+  final String threadId;
   final bool resolved;
+
+  /// A closed chat stays closed — this is the way out of it.
+  final VoidCallback onNew;
+
   final ScrollController scroll;
 
   @override
@@ -647,7 +1021,7 @@ class _Conversation extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     return StreamBuilder<List<SupportMessage>>(
-      stream: context.read<SupportRepository>().watchMessages(uid),
+      stream: context.read<SupportRepository>().watchMessages(threadId),
       builder: (context, snapshot) {
         final messages = snapshot.data;
         if (messages == null) {
@@ -672,21 +1046,38 @@ class _Conversation extends StatelessWidget {
                   color: BlueprintPalette.successBg,
                   borderRadius: BorderRadius.circular(Tokens.rSm),
                 ),
-                child: const Row(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.check_circle_rounded,
+                    const Icon(Icons.check_circle_rounded,
                         size: 15, color: BlueprintPalette.success),
-                    SizedBox(width: Tokens.s2),
+                    const SizedBox(width: Tokens.s2),
                     Expanded(
-                      child: Text(
-                        'This request is marked solved. Send another message '
-                        'and it reopens straight away.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.5,
-                          color: BlueprintPalette.text1,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'This chat is closed. Need something else?',
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.5,
+                              color: BlueprintPalette.text1,
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: onNew,
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              visualDensity: VisualDensity.compact,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              'Start a new chat',
+                              style: TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],

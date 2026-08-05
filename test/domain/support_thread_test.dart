@@ -8,7 +8,7 @@ import 'package:nltc/domain/models/support_thread.dart';
 void main() {
   group('SupportThread.fromMap', () {
     test('reads a thread the website wrote', () {
-      final thread = SupportThread.fromMap('uid-1', {
+      final thread = SupportThread.fromMap('thread-1', {
         'uid': 'uid-1',
         'status': 'open',
         'topic': 'payment',
@@ -18,17 +18,28 @@ void main() {
         'unreadForAdmin': 0,
       });
 
-      expect(thread.uid, 'uid-1');
+      expect(thread.id, 'thread-1');
+      expect(thread.uid, 'uid-1');           // ownership is the field, not the id
       expect(thread.status, SupportStatus.open);
       expect(thread.isResolved, isFalse);
       expect(thread.topic, 'payment');
       expect(thread.lastMessage, 'Any news?');
+      expect(thread.lastMessageFromAdmin, isFalse);
       expect(thread.lastActivity, DateTime(2026, 8, 4, 9, 30));
       expect(thread.unreadForStudent, 2);
     });
 
-    test('falls back to the document id, which is the uid', () {
-      expect(SupportThread.fromMap('uid-2', const {}).uid, 'uid-2');
+    test('a legacy thread, whose id IS the uid, still loads', () {
+      final thread = SupportThread.fromMap('uid-2', const {});
+      expect(thread.id, 'uid-2');
+      expect(thread.uid, 'uid-2');
+    });
+
+    test('marks a summary line that came from the desk', () {
+      final thread = SupportThread.fromMap('t', const {
+        'lastMessage': {'text': 'Your fee is credited', 'senderRole': 'admin'},
+      });
+      expect(thread.lastMessageFromAdmin, isTrue);
     });
 
     test('anything that is not "resolved" is still open', () {

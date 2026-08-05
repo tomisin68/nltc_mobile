@@ -40,21 +40,31 @@ enum SupportStatus {
       raw == 'resolved' ? SupportStatus.resolved : SupportStatus.open;
 }
 
-/// One student's help thread — `supportThreads/{uid}`.
+/// One help conversation — `supportThreads/{threadId}`.
 ///
-/// The document id *is* the student's uid, which is what lets a locked-out
-/// account reach support at all: the rules can check ownership without reading
-/// a profile the student may no longer be allowed to read.
+/// A student may hold several: once a request is solved it stays solved and
+/// moves into their history, and the next question opens a new one. Ownership
+/// is the `uid` FIELD rather than the document id, which still lets a
+/// locked-out account reach support — the rules check that field directly and
+/// never read a profile the student may no longer be allowed to read.
+///
+/// Threads written before conversations could stack up have the uid as their
+/// id *and* in the field, so they load here as that student's first chat.
 class SupportThread {
   const SupportThread({
+    required this.id,
     required this.uid,
     required this.status,
     this.topic,
     this.lastMessage,
+    this.lastMessageFromAdmin = false,
     this.lastActivity,
     this.unreadForStudent = 0,
     this.unreadForAdmin = 0,
   });
+
+  /// The document id — what the messages sub-collection hangs off.
+  final String id;
 
   final String uid;
   final SupportStatus status;
@@ -64,6 +74,11 @@ class SupportThread {
   final String? topic;
 
   final String? lastMessage;
+
+  /// Whether the summary line is NLTC's reply rather than the student's own —
+  /// the history list prefixes those with "Support:".
+  final bool lastMessageFromAdmin;
+
   final DateTime? lastActivity;
 
   /// Replies the student has not opened yet — the badge on the help button.
@@ -78,12 +93,14 @@ class SupportThread {
     final last = m['lastMessage'];
     final ms = tsToMs(m['lastActivity']);
     return SupportThread(
+      id: id,
       uid: (m['uid'] ?? id).toString(),
       status: SupportStatus.parse(m['status'] as String?),
       topic: m['topic'] is String && (m['topic'] as String).isNotEmpty
           ? m['topic'] as String
           : null,
       lastMessage: last is Map ? last['text']?.toString() : null,
+      lastMessageFromAdmin: last is Map && last['senderRole'] == 'admin',
       lastActivity: ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms),
       unreadForStudent: _int(m['unreadForStudent']),
       unreadForAdmin: _int(m['unreadForAdmin']),
