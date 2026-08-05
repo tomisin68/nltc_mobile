@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -434,6 +435,13 @@ class _ChatRow extends StatelessWidget {
 }
 
 /// A round avatar, falling back to initials when there is no photo.
+///
+/// The initials are always painted and the photo fades in over them, so a face
+/// that is still downloading reads as a person rather than as an empty circle —
+/// which is what it used to be, because the initials were only drawn when there
+/// was no photo at all. [CachedNetworkImage] keeps the bytes on disk, so a photo
+/// seen once is on screen immediately on every later launch; Flutter's own image
+/// cache is memory-only and empties on every cold start.
 class ChatAvatar extends StatelessWidget {
   const ChatAvatar({
     super.key,
@@ -442,6 +450,7 @@ class ChatAvatar extends StatelessWidget {
     this.isGroup = false,
     this.size = 44,
     this.online = false,
+    this.onTap,
   });
 
   final String? url;
@@ -449,6 +458,9 @@ class ChatAvatar extends StatelessWidget {
   final bool isGroup;
   final double size;
   final bool online;
+
+  /// Tapping the picture itself, as opposed to the row it sits in.
+  final VoidCallback? onTap;
 
   static String initialsOf(String name) {
     final words = name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
@@ -459,39 +471,70 @@ class ChatAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final photo = url;
+    final hasPhoto = photo != null && photo.isNotEmpty;
+
+    Widget circle = SizedBox(
+      width: size,
+      height: size,
+      child: ClipOval(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            DecoratedBox(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [BlueprintPalette.b600, BlueprintPalette.b400],
+                ),
+              ),
+              child: Center(
+                child: isGroup
+                    ? Icon(
+                        Icons.group_rounded,
+                        size: size * 0.45,
+                        color: Colors.white,
+                      )
+                    : Text(
+                        initialsOf(fallback),
+                        style: TextStyle(
+                          fontSize: size * 0.34,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      ),
+              ),
+            ),
+            if (hasPhoto)
+              CachedNetworkImage(
+                imageUrl: photo,
+                fit: BoxFit.cover,
+                fadeInDuration: Motion.fast,
+                // Nothing is drawn over the initials while the photo loads, and
+                // nothing is drawn if it never arrives — a deleted or expired
+                // Storage URL leaves the initials showing instead of a broken
+                // image icon.
+                placeholder: (_, _) => const SizedBox.shrink(),
+                errorWidget: (_, _, _) => const SizedBox.shrink(),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (onTap != null) {
+      circle = GestureDetector(
+        onTap: onTap,
+        // The picture is round; the tap target should not be.
+        behavior: HitTestBehavior.opaque,
+        child: circle,
+      );
+    }
 
     return Stack(
       children: [
-        Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: url == null
-                ? const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [BlueprintPalette.b600, BlueprintPalette.b400],
-                  )
-                : null,
-            image: url == null
-                ? null
-                : DecorationImage(image: NetworkImage(url!), fit: BoxFit.cover),
-          ),
-          alignment: Alignment.center,
-          child: url != null
-              ? null
-              : isGroup
-                  ? Icon(Icons.group_rounded, size: size * 0.45, color: Colors.white)
-                  : Text(
-                      initialsOf(fallback),
-                      style: TextStyle(
-                        fontSize: size * 0.34,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                      ),
-                    ),
-        ),
+        circle,
         if (online)
           Positioned(
             right: 0,

@@ -9,6 +9,7 @@ import '../core/format.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
+import '../core/widgets/photo_viewer.dart';
 import 'chat_screen.dart' show ChatAvatar;
 import 'conversation_screen.dart';
 
@@ -165,7 +166,25 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ChatAvatar(url: photo, fallback: name, size: 88, online: online),
+            // Tapping the picture opens it full screen. Somebody's photo is
+            // thumbnail-sized everywhere else in the app, and this sheet is
+            // where a student comes to work out who a name belongs to.
+            ChatAvatar(
+              url: photo,
+              fallback: name,
+              size: 88,
+              online: online,
+              onTap: photo == null || photo.isEmpty
+                  ? null
+                  : () => PhotoViewer.open(context, photo, title: name),
+            ),
+            if (photo != null && photo.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Tap the photo to view it',
+                style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+              ),
+            ],
             const SizedBox(height: Tokens.s4),
             Text(
               name,

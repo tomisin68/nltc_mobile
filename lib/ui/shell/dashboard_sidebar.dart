@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -395,14 +396,17 @@ class _Avatar extends StatelessWidget {
       ),
       alignment: Alignment.center,
       child: photo != null && photo.isNotEmpty
-          ? Image.network(
-              photo,
+          ? CachedNetworkImage(
+              imageUrl: photo,
               width: 36,
               height: 36,
               fit: BoxFit.cover,
-              // A broken or unreachable photo URL falls back to initials rather
-              // than Flutter's grey placeholder box.
-              errorBuilder: (_, _, _) => _initials(context),
+              // Cached to disk, so the student's own face is on the sidebar the
+              // moment it opens rather than after a round trip on every launch.
+              // Initials stand in while it loads, and stay if the URL is broken
+              // or unreachable — Flutter's grey placeholder box never shows.
+              placeholder: (_, _) => _initials(context),
+              errorWidget: (_, _, _) => _initials(context),
             )
           : _initials(context),
     );

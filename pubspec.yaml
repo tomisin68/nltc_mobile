@@ -67,6 +67,10 @@ dependencies:
   # Jumping to a quoted message needs to scroll to an index, which the stock
   # ListView cannot do without measuring every bubble above it.
   scrollable_positioned_list: ^0.3.8
+  # Avatars keep their bytes on disk between launches. Flutter's own image cache
+  # is memory-only, so every cold start re-downloaded every face in the chat
+  # list — on a slow connection that is a screen of empty circles.
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:

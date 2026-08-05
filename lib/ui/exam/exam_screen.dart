@@ -650,25 +650,6 @@ class _QuestionPage extends StatelessWidget {
           child: Wrap(
             spacing: Tokens.s2,
             children: [
-              TextButton.icon(
-                onPressed: () => controller.toggleFlag(question),
-                icon: Icon(
-                  controller.isFlagged(question)
-                      ? Icons.bookmark
-                      : Icons.bookmark_border,
-                  size: 18,
-                ),
-                label: Text(
-                  controller.isFlagged(question)
-                      ? 'Flagged for review'
-                      : 'Flag for review',
-                ),
-                style: TextButton.styleFrom(
-                  foregroundColor: controller.isFlagged(question)
-                      ? BlueprintPalette.warning
-                      : scheme.onSurfaceVariant,
-                ),
-              ),
               if (chosen != null && !controller.config.revealsAnswers)
                 TextButton.icon(
                   onPressed: () => controller.clearAnswer(question),
@@ -678,9 +659,8 @@ class _QuestionPage extends StatelessWidget {
                     foregroundColor: scheme.onSurfaceVariant,
                   ),
                 ),
-              // Reporting a bad question, as opposed to flagging a hard one to
-              // come back to. The same button is on the corrections screen,
-              // where a wrong answer key is far easier to spot.
+              // Reporting a bad question. The same button is on the corrections
+              // screen, where a wrong answer key is far easier to spot.
               ReportQuestionButton(
                 question: question,
                 // The question's own subject, not the page's: a PageView builds

@@ -13,6 +13,7 @@ import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
 import '../core/widgets/app_card.dart';
+import '../core/widgets/photo_viewer.dart';
 import 'chat_screen.dart' show ChatAvatar;
 import 'user_profile_sheet.dart';
 import 'widgets/contact_search_list.dart';
@@ -355,6 +356,13 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                         fallback: chat.name ?? 'Group',
                         isGroup: true,
                         size: 96,
+                        // Viewing the picture is the tap; changing it is the
+                        // camera button in the corner, admins only.
+                        onTap: () => PhotoViewer.open(
+                          context,
+                          chat.groupPhoto,
+                          title: chat.name,
+                        ),
                       ),
                       if (_uploadingPhoto)
                         const Positioned.fill(

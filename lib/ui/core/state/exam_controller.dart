@@ -7,7 +7,7 @@ import '../../../domain/models/exam_config.dart';
 import '../../../domain/models/question.dart';
 
 /// How a single question stands, for the palette grid.
-enum QuestionStatus { unanswered, answered, flagged }
+enum QuestionStatus { unanswered, answered }
 
 /// Runs one sitting from the first question to the graded result.
 ///
@@ -48,7 +48,6 @@ class ExamController extends ChangeNotifier {
   Map<String, String> get answers => Map.unmodifiable(_answers);
 
   final Map<String, String> _answers = {};
-  final Set<String> _flagged = {};
 
   Timer? _ticker;
   Duration _remaining;
@@ -68,7 +67,6 @@ class ExamController extends ChangeNotifier {
   String? get submitError => _submitError;
 
   int get answeredCount => _answers.length;
-  int get flaggedCount => _flagged.length;
   int get unansweredCount => total - _answers.length;
   double get progress => total == 0 ? 0 : _answers.length / total;
 
@@ -148,15 +146,10 @@ class ExamController extends ChangeNotifier {
       config.isTimed && _remaining <= const Duration(minutes: 1);
 
   String? answerFor(Question q) => _answers[q.id];
-  bool isFlagged(Question q) => _flagged.contains(q.id);
 
-  QuestionStatus statusAt(int i) {
-    final q = questions[i];
-    if (_flagged.contains(q.id)) return QuestionStatus.flagged;
-    return _answers.containsKey(q.id)
-        ? QuestionStatus.answered
-        : QuestionStatus.unanswered;
-  }
+  QuestionStatus statusAt(int i) => _answers.containsKey(questions[i].id)
+      ? QuestionStatus.answered
+      : QuestionStatus.unanswered;
 
   String get formattedRemaining {
     final seconds = _remaining.inSeconds.clamp(0, 359999);
@@ -190,11 +183,6 @@ class ExamController extends ChangeNotifier {
 
   void clearAnswer(Question question) {
     if (_answers.remove(question.id) != null) notifyListeners();
-  }
-
-  void toggleFlag(Question question) {
-    if (!_flagged.remove(question.id)) _flagged.add(question.id);
-    notifyListeners();
   }
 
   void goTo(int i) {

@@ -40,10 +40,6 @@ class QuestionPalette extends StatelessWidget {
                   label: '${controller.answeredCount} answered',
                 ),
                 _LegendDot(
-                  color: BlueprintPalette.warning,
-                  label: '${controller.flaggedCount} flagged',
-                ),
-                _LegendDot(
                   color: scheme.outline,
                   label: '${controller.unansweredCount} left',
                 ),
@@ -155,10 +151,6 @@ class _PaletteCell extends StatelessWidget {
 
     final (background, foreground) = switch (status) {
       QuestionStatus.answered => (scheme.primary, scheme.onPrimary),
-      QuestionStatus.flagged => (
-          BlueprintPalette.warning,
-          const Color(0xFF3B2503),
-        ),
       QuestionStatus.unanswered => (
           scheme.surfaceContainerHigh,
           scheme.onSurfaceVariant,

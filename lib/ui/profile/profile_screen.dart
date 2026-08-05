@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -432,8 +433,10 @@ class _StudentRecordCard extends StatelessWidget {
                   border: Border.all(color: scheme.outlineVariant, width: 3),
                   image: avatarUrl == null
                       ? null
+                      // Cached to disk so the photo is already there on a cold
+                      // start, the same provider the chat avatars use.
                       : DecorationImage(
-                          image: NetworkImage(avatarUrl!),
+                          image: CachedNetworkImageProvider(avatarUrl!),
                           fit: BoxFit.cover,
                         ),
                 ),

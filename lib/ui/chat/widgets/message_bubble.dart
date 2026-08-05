@@ -5,6 +5,7 @@ import '../../../domain/models/chat.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/widgets/in_app_browser.dart';
 import '../chat_screen.dart' show ChatAvatar;
+import 'link_preview_card.dart';
 import 'message_attachment.dart';
 
 /// One message, with everything that can hang off it.
@@ -297,6 +298,18 @@ class _MessageBubbleState extends State<MessageBubble> {
                       ),
                     ),
                   ),
+                // What the link points at. Below the text rather than above it,
+                // so the message a classmate actually typed is still the first
+                // thing read. A picture or a document already is its own
+                // preview, so a caption with a link in it doesn't get a second.
+                if (!message.hasAttachment && _link(message) != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 7, right: 7),
+                    child: LinkPreviewCard(
+                      url: _link(message)!,
+                      isMine: isMine,
+                    ),
+                  ),
               ],
 
               // Time and ticks, tucked to the trailing edge.
@@ -377,6 +390,11 @@ class _MessageBubbleState extends State<MessageBubble> {
     if (message.hasAttachment) return message.caption ?? '';
     return message.text;
   }
+
+  /// The link this message is about, if it has one. Only the first: a message
+  /// listing five links wants to stay a message, not become five cards.
+  static String? _link(ChatMessage message) =>
+      firstLinkIn(_captionOrText(message));
 }
 
 /// The quoted message above a reply. Tapping it jumps to the original.

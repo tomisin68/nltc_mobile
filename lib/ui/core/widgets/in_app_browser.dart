@@ -26,6 +26,9 @@ Future<String?> openInAppBrowser(
   String? title,
   bool Function(Uri url)? closeWhen,
 }) {
+  // A link typed as `www.example.com` has no scheme of its own; assume https
+  // rather than rejecting it, the way an address bar does.
+  url = normaliseUrl(url);
   final uri = Uri.tryParse(url);
   if (uri == null || !uri.hasScheme) {
     showToast('That link is not valid.', variant: ToastVariant.error);
@@ -79,6 +82,10 @@ class _InAppBrowserState extends State<InAppBrowser> {
   /// can both see the closing URL.
   bool _closed = false;
 
+  /// True once the `www.` fallback below has been tried, so a site that is down
+  /// on both names fails rather than looping.
+  bool _triedWithoutWww = false;
+
   @override
   void initState() {
     super.initState();
@@ -113,6 +120,7 @@ class _InAppBrowserState extends State<InAppBrowser> {
             // Only the page itself failing is worth saying — a missing image or
             // a blocked tracker fires this too.
             if (error.isForMainFrame == false || !mounted) return;
+            if (_retryWithoutWww(error)) return;
             setState(() => _loading = false);
             showToast(
               'That page could not load. Check your connection.',
@@ -122,6 +130,31 @@ class _InAppBrowserState extends State<InAppBrowser> {
         ),
       )
       ..loadRequest(Uri.parse(widget.url));
+  }
+
+  /// Retries a dead `www.` host at the bare domain, once.
+  ///
+  /// `www.nltc.com.ng` has no DNS record of its own while `nltc.com.ng` serves
+  /// the site, so a student sent the address with the `www.` on the front got
+  /// nothing but an error — and that is how most people write a web address
+  /// down. A missing `www` record is a common way to publish a domain and not
+  /// something a student can be expected to work around, so the browser does.
+  ///
+  /// Only a name that failed to resolve is retried: a site that is genuinely
+  /// down, or refusing the connection, must still say so.
+  bool _retryWithoutWww(WebResourceError error) {
+    if (_triedWithoutWww) return false;
+    if (error.errorType != WebResourceErrorType.hostLookup) return false;
+
+    final uri = Uri.tryParse(_currentUrl);
+    final host = uri?.host ?? '';
+    if (uri == null || !host.toLowerCase().startsWith('www.')) return false;
+
+    _triedWithoutWww = true;
+    final fallback = uri.replace(host: host.substring(4));
+    setState(() => _currentUrl = fallback.toString());
+    _controller.loadRequest(fallback);
+    return true;
   }
 
   NavigationDecision _onNavigation(NavigationRequest request) {
@@ -248,6 +281,33 @@ class _InAppBrowserState extends State<InAppBrowser> {
   }
 }
 
+/// What counts as a link in a message. Same pattern as the web's `URL_REGEX`.
+///
+/// Top-level so the preview card and the tappable text agree exactly: a card
+/// under a link the text did not underline would be baffling.
+final RegExp kUrlPattern = RegExp(
+  r'''https?:\/\/[^\s<>"']+|www\.[^\s<>"']+''',
+  caseSensitive: false,
+);
+
+/// Turns what somebody typed into something that can actually be opened.
+///
+/// `www.nltc.com.ng` has no scheme, so `Uri.parse` reads it as a *path* — a
+/// relative reference nothing can launch. Assuming `https` is what every browser
+/// address bar does with the same input.
+String normaliseUrl(String raw) {
+  final trimmed = raw.trim();
+  return RegExp(r'^[a-z][a-z0-9+.-]*:', caseSensitive: false).hasMatch(trimmed)
+      ? trimmed
+      : 'https://$trimmed';
+}
+
+/// The first link in [text], ready to open, or null if there isn't one.
+String? firstLinkIn(String text) {
+  final match = kUrlPattern.firstMatch(text);
+  return match == null ? null : normaliseUrl(match.group(0)!);
+}
+
 /// Text with its URLs turned into tappable links that open inside the app.
 ///
 /// Shared by both chats — the class chat and the private one — so a link looks
@@ -273,12 +333,6 @@ class LinkifiedText extends StatefulWidget {
 class _LinkifiedTextState extends State<LinkifiedText> {
   final _recognizers = <TapGestureRecognizerHolder>[];
 
-  /// Same pattern as the web's `URL_REGEX`.
-  static final _urlPattern = RegExp(
-    r'''https?:\/\/[^\s<>"']+|www\.[^\s<>"']+''',
-    caseSensitive: false,
-  );
-
   @override
   void dispose() {
     _disposeRecognizers();
@@ -294,7 +348,7 @@ class _LinkifiedTextState extends State<LinkifiedText> {
 
   @override
   Widget build(BuildContext context) {
-    final matches = _urlPattern.allMatches(widget.text).toList();
+    final matches = kUrlPattern.allMatches(widget.text).toList();
     if (matches.isEmpty) return Text(widget.text, style: widget.style);
 
     _disposeRecognizers();
@@ -310,7 +364,7 @@ class _LinkifiedTextState extends State<LinkifiedText> {
         spans.add(TextSpan(text: widget.text.substring(cursor, match.start)));
       }
       final raw = match.group(0)!;
-      final href = raw.startsWith('http') ? raw : 'https://$raw';
+      final href = normaliseUrl(raw);
       final holder = TapGestureRecognizerHolder(
         () => openInAppBrowser(context, href),
       );

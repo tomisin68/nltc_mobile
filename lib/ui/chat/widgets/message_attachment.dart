@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../domain/models/chat.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/toast.dart';
+import '../../core/widgets/photo_viewer.dart';
 
 /// Renders whatever a message is carrying.
 ///
@@ -48,67 +50,30 @@ class _ImageAttachment extends StatelessWidget {
   Widget build(BuildContext context) => ClipRRect(
         borderRadius: BorderRadius.circular(Tokens.rSm),
         child: GestureDetector(
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => _ImageViewer(url: url)),
-          ),
+          onTap: () => PhotoViewer.open(context, url),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 260),
-            child: Image.network(
-              url,
+            // Cached to disk: scrolling back up a conversation used to
+            // re-download every picture in it.
+            child: CachedNetworkImage(
+              imageUrl: url,
               fit: BoxFit.cover,
-              loadingBuilder: (context, child, progress) => progress == null
-                  ? child
-                  : SizedBox(
-                      height: 160,
-                      width: 200,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          value: progress.expectedTotalBytes == null
-                              ? null
-                              : progress.cumulativeBytesLoaded /
-                                  progress.expectedTotalBytes!,
-                        ),
-                      ),
-                    ),
-              errorBuilder: (context, _, _) => const SizedBox(
+              progressIndicatorBuilder: (context, _, progress) => SizedBox(
+                height: 160,
+                width: 200,
+                child: Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    value: progress.progress,
+                  ),
+                ),
+              ),
+              errorWidget: (context, _, _) => const SizedBox(
                 height: 120,
                 width: 200,
                 child: Center(child: Icon(Icons.broken_image_outlined)),
               ),
             ),
-          ),
-        ),
-      );
-}
-
-/// Full-screen, pinch-to-zoom.
-class _ImageViewer extends StatelessWidget {
-  const _ImageViewer({required this.url});
-
-  final String url;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        backgroundColor: Colors.black,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          foregroundColor: Colors.white,
-          actions: [
-            IconButton(
-              onPressed: () => launchUrl(
-                Uri.parse(url),
-                mode: LaunchMode.externalApplication,
-              ),
-              icon: const Icon(Icons.open_in_new_rounded),
-              tooltip: 'Open',
-            ),
-          ],
-        ),
-        body: Center(
-          child: InteractiveViewer(
-            maxScale: 5,
-            child: Image.network(url, fit: BoxFit.contain),
           ),
         ),
       );

@@ -25,6 +25,7 @@ import 'data/repositories/support_repository.dart';
 import 'data/repositories/video_repository.dart';
 import 'data/services/api_client.dart';
 import 'data/services/firestore_cache.dart';
+import 'data/services/link_preview_service.dart';
 import 'data/services/local_database.dart';
 import 'data/services/mission_signals.dart';
 import 'data/services/prefs_service.dart';
@@ -102,6 +103,11 @@ class NltcApp extends StatelessWidget {
         Provider<PrefsService>.value(value: prefs),
         Provider<LocalDatabase>.value(value: localDatabase),
         Provider<FirestoreCache>(create: (_) => FirestoreCache(sharedPrefs)),
+        // App-wide, so the same link pasted into three conversations is read
+        // once and every bubble showing it shares the answer.
+        Provider<LinkPreviewService>(
+          create: (_) => LinkPreviewService(sharedPrefs),
+        ),
         Provider<MissionSignals>(create: (_) => MissionSignals(sharedPrefs)),
         Provider<ApiClient>(create: (_) => ApiClient()),
         Provider<PushService>(create: (_) => PushService()),
