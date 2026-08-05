@@ -15,7 +15,28 @@
       "Bash(curl -s -X POST -H \"Content-Type: application/json\" -d '{\"channelName\":\"test_channel\",\"role\":\"audience\"}' -w \"\\\\ntoken\\(no auth\\): %{http_code}\\\\n\" https://nltc-backend.onrender.com/api/agora/token)",
       "Bash(adb devices *)",
       "PowerShell($adb = \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; if \\(Test-Path $adb\\) { & $adb devices -l } else { \"not at $adb\"; Get-ChildItem \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name })",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(NODE_PATH=\"c:/Users/Admin/nltc-backend/node_modules\" node \"C:/Users/Admin/AppData/Local/Temp/claude/c--Users-Admin-StudioProjects-nltc-mobile/d378c5b6-cafd-4a7e-8765-6b13152e2808/scratchpad/dump-classes.js\")",
+      "Bash(NODE_PATH=\"c:/Users/Admin/nltc-backend/node_modules\" node \"C:/Users/Admin/AppData/Local/Temp/claude/c--Users-Admin-StudioProjects-nltc-mobile/d378c5b6-cafd-4a7e-8765-6b13152e2808/scratchpad/set-class-levels.js\")",
+      "Bash(git checkout *)",
+      "Bash(python -c \"import PIL; print\\('pillow', PIL.__version__\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python \"C:/Users/Admin/AppData/Local/Temp/claude/c--Users-Admin-StudioProjects-nltc-mobile/5fe803e3-9251-4cc8-b9a7-39dd7e05b0f2/scratchpad/make_logos.py\")",
+      "Bash(python \"C:/Users/Admin/AppData/Local/Temp/claude/c--Users-Admin-StudioProjects-nltc-mobile/5fe803e3-9251-4cc8-b9a7-39dd7e05b0f2/scratchpad/make_icons.py\")",
+      "Bash(python -c \"import json;json.load\\(open\\(r'C:/Users/Admin/StudioProjects/NLTC Online/public/manifest.json'\\)\\);print\\('manifest.json OK'\\)\")",
+      "Bash(python \"C:/Users/Admin/AppData/Local/Temp/claude/c--Users-Admin-StudioProjects-nltc-mobile/5fe803e3-9251-4cc8-b9a7-39dd7e05b0f2/scratchpad/make_emblem.py\")",
+      "Bash(python -c \"import json;json.load\\(open\\('public/manifest.json'\\)\\);print\\('manifest OK'\\)\")",
+      "Bash(git branch *)",
+      "Bash(git status *)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\styles",
+      "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\pages",
+      "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\components\\layout",
+      "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\public",
+      "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\components\\exam",
+      "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\utils",
+      "c:\\Users\\Admin\\StudioProjects\\NLTC Online"
     ]
   }
 }
