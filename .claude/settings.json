@@ -27,7 +27,14 @@
       "Bash(python \"C:/Users/Admin/AppData/Local/Temp/claude/c--Users-Admin-StudioProjects-nltc-mobile/5fe803e3-9251-4cc8-b9a7-39dd7e05b0f2/scratchpad/make_emblem.py\")",
       "Bash(python -c \"import json;json.load\\(open\\('public/manifest.json'\\)\\);print\\('manifest OK'\\)\")",
       "Bash(git branch *)",
-      "Bash(git status *)"
+      "Bash(git status *)",
+      "Bash(git merge *)",
+      "Bash(node -e \"require\\('./src/routes/payments.js'\\); console.log\\('payments.js OK'\\)\")",
+      "Bash(node --check src/server.js)",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(PYTHONIOENCODING=utf-8 python -)",
+      "Bash(echo \"=== exit: $? \\(1 = clean\\) ===\")",
+      "Bash(python -c \"import json;json.load\\(open\\('firestore.indexes.json'\\)\\);print\\('indexes JSON valid'\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\styles",
@@ -36,7 +43,8 @@
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\public",
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\components\\exam",
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\utils",
-      "c:\\Users\\Admin\\StudioProjects\\NLTC Online"
+      "c:\\Users\\Admin\\StudioProjects\\NLTC Online",
+      "C:\\Users\\Admin\\StudioProjects\\NLTC Online"
     ]
   }
 }
