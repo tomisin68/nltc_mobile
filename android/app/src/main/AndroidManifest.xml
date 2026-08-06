@@ -15,7 +15,7 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
 
     <application
-        android:label="nltc"
+        android:label="NLTC ONLINE"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -56,8 +56,8 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
-        <!-- url_launcher needs to see a browser to hand the Flutterwave
-             checkout off to one. -->
+        <!-- url_launcher needs to see a browser to open https links — chat
+             link previews and the policy pages. -->
         <intent>
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="https"/>

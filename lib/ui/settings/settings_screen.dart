@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 
 import '../../data/repositories/billing_repository.dart';
 import '../../data/repositories/profile_repository.dart';
-import '../../data/services/api_client.dart' show ApiException;
 import '../../domain/models/access_state.dart';
 import '../../domain/models/app_user.dart';
 import '../core/state/session_controller.dart';
@@ -13,17 +12,17 @@ import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
 import '../core/widgets/app_card.dart';
 import '../core/widgets/empty_state.dart';
-import '../core/widgets/in_app_browser.dart';
 import '../core/widgets/page_header.dart';
 import '../core/widgets/skeleton.dart';
 import '../profile/widgets/profile_form_fields.dart';
+import 'widgets/bank_transfer_sheet.dart';
 
 /// Settings.
 ///
 /// Port of `src/pages/dashboard/SettingsView.jsx`: the profile block, the monthly
-/// fee (or subscription) with checkout, and the payment history. Checkout hands
-/// off to Flutterwave in the browser exactly as the website does — the app never
-/// touches card details, which keeps it out of PCI scope entirely.
+/// fee (or subscription), and the payment history. Paying is a bank transfer
+/// with a receipt an admin confirms — there is no gateway and no card, here or
+/// on the website.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -55,7 +54,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<PaymentRecord>? _payments;
   Fees _fees = const Fees();
 
-  bool _checkingOut = false;
+  PaymentProof? _pendingProof;
+  bool _loadingProof = true;
 
   static const _exams = ['JAMB', 'WAEC', 'NECO', 'GCE'];
 
@@ -113,6 +113,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final payments = await billing.payments(uid);
       if (mounted) setState(() => _payments = payments);
     }
+
+    await _refreshProof();
   }
 
   /// The fees that concern this student: their study mode crossed with their
@@ -197,14 +199,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  /// Starts a checkout and runs it inside the app.
+  /// Opens the bank transfer flow for a fee or the Pro plan.
   ///
-  /// Flutterwave is hosted, so the app never sees a card — but it does stay on
-  /// screen around it. Handing the URL to the system browser used to drop the
-  /// student out of NLTC mid-payment and leave them to find their own way back;
-  /// now the checkout is a screen they can close, and the backend's callback
-  /// redirect is what tells the app it is over.
-  Future<void> _checkout({required bool lessonFee}) async {
+  /// There is no gateway to hand off to: the student transfers to the NLTC
+  /// account, uploads the receipt, and an admin confirms it. The approval is
+  /// what unlocks the account, and it arrives over the profile stream — so
+  /// there is nothing here to poll and no browser to come back from.
+  Future<void> _payByTransfer({required bool lessonFee}) async {
     final session = context.read<SessionController>();
     final uid = session.account?.uid;
     if (uid == null) return;
@@ -215,84 +216,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
-    final billing = context.read<BillingRepository>();
-    final profiles = context.read<ProfileRepository>();
+    if (lessonFee && chosen != null) {
+      // Remembered on the profile so an admin sees the right fee against this
+      // student even if they end up paying cash at the centre.
+      await context.read<ProfileRepository>().save(uid, {
+        'classId': chosen.id,
+        'className': chosen.name,
+        'classType': chosen.type,
+      }).catchError((_) {});
+    }
+    if (!mounted) return;
 
-    setState(() => _checkingOut = true);
-    try {
-      if (lessonFee && chosen != null) {
-        // Remembered on the profile so an admin sees the right fee against this
-        // student even if they end up paying cash at the centre.
-        await profiles.save(uid, {
-          'classId': chosen.id,
-          'className': chosen.name,
-          'classType': chosen.type,
-        }).catchError((_) {});
-      }
+    final submitted = await showBankTransferSheet(
+      context,
+      type: lessonFee ? 'lesson_fee' : 'plan_upgrade',
+      plan: lessonFee ? null : 'pro',
+      classItem: lessonFee ? chosen : null,
+    );
+    if (!mounted || !submitted) return;
 
-      final url = lessonFee
-          ? await billing.startCheckout(
-              type: 'lesson_fee',
-              amount: chosen!.price,
-              metadata: {
-                'type': 'lesson_fee',
-                'className': chosen.name,
-                'classId': chosen.id,
-                'description': chosen.name,
-              },
-            )
-          : await billing.startCheckout(type: 'plan_upgrade', plan: 'pro');
+    // The receipt is now with an admin. Swapping the pay button for the
+    // pending card immediately is what stops a student transferring twice
+    // while they wait.
+    await _refreshProof();
+    if (!mounted) return;
+    final payments = await context.read<BillingRepository>().payments(uid);
+    if (mounted) setState(() => _payments = payments);
+  }
 
-      if (!mounted) return;
-      // The backend verifies the transaction and then bounces to
-      // `/payment/result?status=…` on the website. That redirect is the signal
-      // the payment is finished — there is no page past it worth showing inside
-      // the app, so the browser closes on it and reports what it said.
-      final landed = await openInAppBrowser(
-        context,
-        url,
-        title: lessonFee ? 'Lesson fee' : 'Upgrade to Pro',
-        closeWhen: (uri) => uri.path.contains('/payment/result'),
-      );
-      if (!mounted) return;
-
-      final status = landed == null
-          ? null
-          : Uri.tryParse(landed)?.queryParameters['status'];
-      switch (status) {
-        case 'success':
-          // The unlock itself lands over the profile stream; refreshing just
-          // stops the student staring at a locked screen while it does.
-          await session.refreshProfile();
-          if (!mounted) return;
-          showToast('Payment received — thank you!',
-              variant: ToastVariant.success);
-        case 'cancelled':
-          showToast('Payment cancelled.');
-        case null:
-          // Backed out of the browser without reaching the callback. The
-          // payment may still land, so this is not an error.
-          break;
-        default:
-          showToast(
-            'That payment did not go through. Please try again.',
-            variant: ToastVariant.error,
-          );
-      }
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      // The backend refuses a checkout for reasons the student can act on — the
-      // class was closed, or it has no price set. Replacing all of them with
-      // "please try again" turned those into a button that silently did nothing.
-      showToast(e.message, variant: ToastVariant.error);
-    } catch (_) {
-      if (!mounted) return;
-      showToast(
-        'Could not start the payment. Please try again.',
-        variant: ToastVariant.error,
-      );
-    } finally {
-      if (mounted) setState(() => _checkingOut = false);
+  /// Re-reads whether a receipt is still with an admin.
+  Future<void> _refreshProof() async {
+    final proof = await context.read<BillingRepository>().pendingProof();
+    if (mounted) {
+      setState(() {
+        _pendingProof = proof;
+        _loadingProof = false;
+      });
     }
   }
 
@@ -529,7 +488,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: Tokens.s4),
 
         // ── Fee / subscription ──
-        if (useClassBilling)
+        //
+        // A receipt already with an admin replaces the pay card outright.
+        // Leaving a Pay button up while one is under review is how a student
+        // ends up transferring for the same month twice.
+        if (_pendingProof case final proof?)
+          _PendingReviewCard(proof: proof, onRefresh: _refreshProof)
+        else if (useClassBilling)
           _FeeCard(
             isPhysical: isPhysical,
             isJunior: isJunior,
@@ -538,15 +503,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             loadingClasses: _loadingClasses,
             selected: _payableSelection,
             onSelect: (offering) => setState(() => _selectedClass = offering),
-            busy: _checkingOut,
-            onPay: () => _checkout(lessonFee: true),
+            busy: _loadingProof,
+            onPay: () => _payByTransfer(lessonFee: true),
           )
         else
           _SubscriptionCard(
             profile: profile,
             fees: _fees,
-            busy: _checkingOut,
-            onUpgrade: () => _checkout(lessonFee: false),
+            busy: _loadingProof,
+            onUpgrade: () => _payByTransfer(lessonFee: false),
           ),
         const SizedBox(height: Tokens.s4),
 
@@ -770,15 +735,17 @@ class _FeeCard extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : Icon(
-                    feePaid ? Icons.autorenew_rounded : Icons.credit_card_rounded,
+                    feePaid
+                        ? Icons.autorenew_rounded
+                        : Icons.account_balance_rounded,
                     size: 18,
                   ),
             label: Text(
               feePaid
-                  ? 'Renew for Another Month'
+                  ? 'Renew — Bank Transfer'
                   : isPhysical
                       ? 'Pay Monthly Fee'
-                      : 'Pay Now',
+                      : 'Pay by Bank Transfer',
             ),
           ),
           const SizedBox(height: Tokens.s3),
@@ -786,8 +753,9 @@ class _FeeCard extends StatelessWidget {
             isPhysical
                 ? 'Already paid at the centre? Your admin will activate your '
                     'account — no need to pay again.'
-                : 'Your access unlocks immediately after payment and runs for '
-                    '30 days.',
+                : 'Transfer to the NLTC account, upload your receipt, and your '
+                    'access is opened once an admin confirms it — usually '
+                    '$kConfirmationWindow. Access runs for 30 days.',
             style: TextStyle(
               fontSize: 11,
               height: 1.5,
@@ -1073,13 +1041,90 @@ class _SubscriptionCard extends StatelessWidget {
               Icon(Icons.lock_rounded, size: 11, color: scheme.onSurfaceVariant),
               const SizedBox(width: 4),
               Text(
-                'Secured by Flutterwave · Cancel anytime',
+                'Bank transfer · activated in $kConfirmationWindow',
                 style: TextStyle(
                   fontSize: 10.5,
                   color: scheme.onSurfaceVariant,
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── History ────────────────────────────────────────────────────────────────
+
+/// Shown in place of the pay card while a receipt is with an admin.
+class _PendingReviewCard extends StatelessWidget {
+  const _PendingReviewCard({required this.proof, required this.onRefresh});
+
+  final PaymentProof proof;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final money = NumberFormat.decimalPattern();
+
+    return AppCard(
+      title: 'Monthly Fee',
+      titleIcon: Icons.hourglass_top_rounded,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(Tokens.s4),
+            decoration: BoxDecoration(
+              color: BlueprintPalette.b500.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(Tokens.rSm),
+              border: Border.all(
+                color: BlueprintPalette.b500.withValues(alpha: 0.35),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.hourglass_top_rounded,
+                    color: BlueprintPalette.b500),
+                const SizedBox(width: Tokens.s3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Receipt received — awaiting confirmation',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: BlueprintPalette.b600,
+                        ),
+                      ),
+                      const SizedBox(height: Tokens.s2),
+                      Text(
+                        "We're checking your ₦${money.format(proof.amount)} "
+                        'transfer for ${proof.description ?? 'your fee'}. Your '
+                        'account opens as soon as it is confirmed — usually '
+                        "$kConfirmationWindow. We'll notify you the moment "
+                        "it's done.",
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.55,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: Tokens.s3),
+          OutlinedButton.icon(
+            onPressed: onRefresh,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Check status'),
           ),
         ],
       ),

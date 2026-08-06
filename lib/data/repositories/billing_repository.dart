@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 import '../../domain/models/app_user.dart' show tsToMs;
 import '../services/api_client.dart';
@@ -199,23 +202,134 @@ class Fees {
       );
 }
 
-/// Fees, payments and starting a checkout.
+/// The account students transfer their fees to.
 ///
-/// The app never handles card details: it asks the backend to open a Flutterwave
-/// session and hands the returned URL to the browser, which is the same flow the
-/// website uses and keeps the app out of PCI scope entirely.
+/// Mirrors `nltc-backend/src/config/bankAccount.js`. The backend is the source
+/// of truth — an admin can change the account from `settings/bankAccount`
+/// without a release — but a payment screen with a blank account number is
+/// worse than a slightly stale one, so these constants are what shows when the
+/// fetch fails.
+class BankAccount {
+  const BankAccount({
+    this.accountNumber = '8270157607',
+    this.bankName = 'Moniepoint',
+    this.accountName = 'NLTC Global Service- Next level tutorial',
+    this.note = 'Transfer the exact amount, then upload your receipt below. '
+        'Confirmation usually takes under 2 hours.',
+  });
+
+  final String accountNumber;
+  final String bankName;
+  final String accountName;
+  final String note;
+
+  static String? _str(dynamic v) {
+    if (v is String && v.trim().isNotEmpty) return v.trim();
+    return null;
+  }
+
+  /// Merges a response field by field, so a partial payload cannot blank the
+  /// account number.
+  factory BankAccount.fromJson(Map<String, dynamic> json) {
+    const fallback = BankAccount();
+    return BankAccount(
+      accountNumber: _str(json['accountNumber']) ?? fallback.accountNumber,
+      bankName: _str(json['bankName']) ?? fallback.bankName,
+      accountName: _str(json['accountName']) ?? fallback.accountName,
+      note: _str(json['note']) ?? fallback.note,
+    );
+  }
+}
+
+/// How long a student should expect to wait for an admin to confirm.
+const kConfirmationWindow = 'under 2 hours';
+
+/// A receipt the student has sent in, and where it got to.
+class PaymentProof {
+  const PaymentProof({
+    required this.id,
+    required this.status,
+    required this.amount,
+    this.description,
+    this.reference,
+    this.receiptUrl,
+    this.reviewNote,
+    this.createdAt,
+  });
+
+  final String id;
+
+  /// `pending`, `approved`, `rejected`.
+  final String status;
+
+  final int amount;
+  final String? description;
+  final String? reference;
+  final String? receiptUrl;
+
+  /// Why an admin rejected it — shown to the student verbatim.
+  final String? reviewNote;
+
+  final DateTime? createdAt;
+
+  bool get isPending => status == 'pending';
+
+  static String? _str(dynamic v) {
+    if (v is String && v.trim().isNotEmpty) return v.trim();
+    return null;
+  }
+
+  factory PaymentProof.fromJson(Map<String, dynamic> m) {
+    final ms = m['createdAt'];
+    return PaymentProof(
+      id: (m['id'] ?? '').toString(),
+      status: _str(m['status']) ?? 'pending',
+      amount: m['amount'] is num ? (m['amount'] as num).toInt() : 0,
+      description: _str(m['description']),
+      reference: _str(m['reference']),
+      receiptUrl: _str(m['receiptUrl']),
+      reviewNote: _str(m['reviewNote']),
+      createdAt: ms is num
+          ? DateTime.fromMillisecondsSinceEpoch(ms.toInt())
+          : null,
+    );
+  }
+}
+
+/// What a student will be asked to transfer, priced by the backend.
+class PaymentQuote {
+  const PaymentQuote({required this.amount, required this.description});
+
+  final int amount;
+  final String description;
+
+  factory PaymentQuote.fromJson(Map<String, dynamic> m) => PaymentQuote(
+        amount: m['amount'] is num ? (m['amount'] as num).toInt() : 0,
+        description: (m['description'] ?? 'Monthly fee').toString(),
+      );
+}
+
+/// Fees, payments, and submitting proof of a bank transfer.
+///
+/// There is no payment gateway. A student transfers to the NLTC account,
+/// uploads the receipt here, and an admin confirms it — the approval is what
+/// opens the account. The app never sees card details because no card is ever
+/// involved.
 class BillingRepository {
   BillingRepository({
     required ApiClient api,
     required FirestoreCache cache,
     FirebaseFirestore? firestore,
+    FirebaseStorage? storage,
   })  : _api = api,
         _cache = cache,
-        _db = firestore ?? FirebaseFirestore.instance;
+        _db = firestore ?? FirebaseFirestore.instance,
+        _storage = storage ?? FirebaseStorage.instance;
 
   final ApiClient _api;
   final FirestoreCache _cache;
   final FirebaseFirestore _db;
+  final FirebaseStorage _storage;
 
   /// Published prices. Unauthenticated on the backend, like the web's `useFees`.
   Future<Fees> fees() async {
@@ -304,29 +418,123 @@ class BillingRepository {
 
   void invalidatePayments(String uid) => _cache.invalidate('userPayments_$uid');
 
-  /// Opens a checkout and returns the URL to send the student to.
+  /// The account to transfer to, falling back to the bundled constants.
+  ///
+  /// Never throws: the caller is rendering payment instructions and the
+  /// fallback is correct.
+  Future<BankAccount> bankAccount() async {
+    try {
+      final data = await _api.getPublic('/payments/bank-account');
+      final acct = data['bankAccount'];
+      if (acct is Map) {
+        return BankAccount.fromJson(Map<String, dynamic>.from(acct));
+      }
+    } catch (_) {
+      // Backend cold-starting or offline — the hard-coded account still holds.
+    }
+    return const BankAccount();
+  }
+
+  /// What the student will be asked to transfer.
+  ///
+  /// Priced by the same backend code that prices the submission, so the figure
+  /// on the transfer screen cannot drift from the one an admin reviews.
   ///
   /// [type] is `lesson_fee` or `plan_upgrade`, matching the backend.
-  Future<String> startCheckout({
+  Future<PaymentQuote> quote({
     required String type,
-    int? amount,
     String? plan,
-    Map<String, dynamic>? metadata,
+    String? classId,
   }) async {
-    final data = await _api.post('/flutterwave/initialize', {
+    final data = await _api.get('/payments/quote', query: {
       'type': type,
-      'amount': ?amount,
+      'source': 'app',
       'plan': ?plan,
-      // The backend's own callback finishes the payment and updates the profile,
-      // which the app then sees over the profile stream — no deep link needed.
-      'callbackUrl': '${_api.baseUrl}/api/flutterwave/callback',
-      'metadata': ?metadata,
+      'classId': ?classId,
+    });
+    return PaymentQuote.fromJson(data);
+  }
+
+  /// The receipts this student has sent in, newest first.
+  Future<List<PaymentProof>> myProofs() async {
+    try {
+      final data = await _api.get('/payments/proofs/mine');
+      final list = data['proofs'];
+      if (list is! List) return const [];
+      return list
+          .map((e) => PaymentProof.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// The one receipt still with an admin, if any.
+  Future<PaymentProof?> pendingProof() async {
+    final proofs = await myProofs();
+    for (final p in proofs) {
+      if (p.isPending) return p;
+    }
+    return null;
+  }
+
+  /// Uploads a receipt and submits it for review.
+  ///
+  /// This grants nothing. The backend prices the submission from the class
+  /// document — no amount travels with it — and an admin approving the proof is
+  /// what opens the account.
+  ///
+  /// [onProgress] reports 0.0–1.0 while the file uploads.
+  Future<PaymentProof> submitProof({
+    required String uid,
+    required File receipt,
+    required String contentType,
+    required String type,
+    String? plan,
+    String? classId,
+    String? note,
+    void Function(double)? onProgress,
+  }) async {
+    // Storage rules confine this path to the signed-in student, and the backend
+    // re-checks that the submitted path sits under their own folder.
+    final safeName = receipt.uri.pathSegments.last
+        .replaceAll(RegExp(r'[^\w.\-]'), '_');
+    final trimmed = safeName.length > 80
+        ? safeName.substring(safeName.length - 80)
+        : safeName;
+    final path =
+        'paymentProofs/$uid/${DateTime.now().millisecondsSinceEpoch}-$trimmed';
+
+    final ref = _storage.ref(path);
+    final task = ref.putFile(receipt, SettableMetadata(contentType: contentType));
+
+    if (onProgress != null) {
+      task.snapshotEvents.listen((s) {
+        if (s.totalBytes > 0) {
+          onProgress(s.bytesTransferred / s.totalBytes);
+        }
+      });
+    }
+
+    await task;
+    final url = await ref.getDownloadURL();
+
+    final data = await _api.post('/payments/proof', {
+      'type': type,
+      'plan': ?plan,
+      'receiptUrl': url,
+      'receiptPath': path,
+      'receiptName': receipt.uri.pathSegments.last,
+      'receiptType': contentType,
+      'note': ?note,
+      'source': 'app',
+      if (classId != null) 'metadata': {'classId': classId},
     });
 
-    final url = data['authorizationUrl'] ?? data['authorization_url'];
-    if (url is! String || url.isEmpty) {
-      throw const ApiException('Could not start the payment. Please try again.');
+    final proof = data['proof'];
+    if (proof is! Map) {
+      throw const ApiException('Could not submit your receipt. Please try again.');
     }
-    return url;
+    return PaymentProof.fromJson(Map<String, dynamic>.from(proof));
   }
 }

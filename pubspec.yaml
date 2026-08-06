@@ -55,7 +55,7 @@ dependencies:
   # a WebView cannot hold a reliable RTC session on mid-range Android.
   agora_rtc_engine: ^6.5.2
   permission_handler: ^12.0.1
-  # Profile photos, and the Flutterwave checkout the website hands off to.
+  # Profile photos, and opening https links in a browser.
   image_picker: ^1.2.0
   url_launcher: ^6.3.2
   # Chat attachments: Storage for the upload, a picker for documents, and
