@@ -34,7 +34,12 @@
       "Bash(taskkill //F //IM node.exe)",
       "Bash(PYTHONIOENCODING=utf-8 python -)",
       "Bash(echo \"=== exit: $? \\(1 = clean\\) ===\")",
-      "Bash(python -c \"import json;json.load\\(open\\('firestore.indexes.json'\\)\\);print\\('indexes JSON valid'\\)\")"
+      "Bash(python -c \"import json;json.load\\(open\\('firestore.indexes.json'\\)\\);print\\('indexes JSON valid'\\)\")",
+      "Bash([ -s \"$O\" ])",
+      "WebFetch(domain:firebase.google.com)",
+      "WebSearch",
+      "Bash(gcloud auth *)",
+      "Bash(java -version)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\styles",
@@ -44,7 +49,9 @@
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\components\\exam",
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\utils",
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online",
-      "C:\\Users\\Admin\\StudioProjects\\NLTC Online"
+      "C:\\Users\\Admin\\StudioProjects\\NLTC Online",
+      "C:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\utils",
+      "C:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\components\\payments"
     ]
   }
 }
