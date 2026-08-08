@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../domain/models/question.dart';
 import '../core/theme/app_palette.dart';
 import '../core/widgets/empty_state.dart';
+import '../core/widgets/question_body.dart';
 import 'widgets/option_tile.dart';
 import 'widgets/report_question_sheet.dart';
 
@@ -228,9 +229,13 @@ class _ReviewCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: Tokens.s3),
-        SelectableText(
-          question.text,
+        // Same markup the exam hall rendered — a correction that shows
+        // `H<sub>2</sub>O` where the paper showed H₂O reads as a different
+        // question.
+        RichQuestionText(
+          html: question.text,
           style: text.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+          selectable: true,
         ),
         const SizedBox(height: Tokens.s4),
         for (final key in Question.optionKeys)
@@ -268,7 +273,10 @@ class _ReviewCard extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: Tokens.s2),
-                Text(question.explanation!, style: text.bodyMedium),
+                RichQuestionText(
+                  html: question.explanation!,
+                  style: text.bodyMedium,
+                ),
               ],
             ),
           ),

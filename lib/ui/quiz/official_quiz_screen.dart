@@ -18,6 +18,7 @@ import '../core/toast.dart';
 import '../core/widgets/anti_cheat_warning.dart';
 import '../core/widgets/app_card.dart';
 import '../core/widgets/calculator.dart';
+import '../core/widgets/question_body.dart';
 import '../core/widgets/score_ring.dart';
 import '../exam/exam_review_screen.dart';
 import '../exam/widgets/option_tile.dart';
@@ -371,8 +372,8 @@ class _OfficialQuizScreenState extends State<OfficialQuizScreen>
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  question.text,
+                RichQuestionText(
+                  html: question.text,
                   style: TextStyle(
                     fontSize: 15.5,
                     height: 1.55,
