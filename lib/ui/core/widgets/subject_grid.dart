@@ -14,14 +14,22 @@ class SubjectGrid extends StatelessWidget {
     super.key,
     required this.subjects,
     required this.onTap,
-    required this.caption,
-  });
+    this.caption,
+    this.captionOf,
+  }) : assert(
+          caption != null || captionOf != null,
+          'Give the tiles a caption, either fixed or per subject',
+        );
 
   final List<Subject> subjects;
   final void Function(Subject) onTap;
 
-  /// The small label under each subject name — "Study", "Notes", …
-  final String caption;
+  /// The small label under every subject name — "Study", "Notes", …
+  final String? caption;
+
+  /// A per-subject label, when the tiles say something different each — a
+  /// lesson count, say. Takes precedence over [caption].
+  final String Function(Subject)? captionOf;
 
   @override
   Widget build(BuildContext context) => GridView.builder(
@@ -32,7 +40,7 @@ class SubjectGrid extends StatelessWidget {
         itemCount: subjects.length,
         itemBuilder: (context, i) => SubjectTile(
           subject: subjects[i],
-          caption: caption,
+          caption: captionOf?.call(subjects[i]) ?? caption!,
           onTap: () => onTap(subjects[i]),
         ),
       );
