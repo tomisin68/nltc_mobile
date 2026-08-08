@@ -23,10 +23,14 @@ import 'video_player_sheet.dart';
 /// The lesson library — class → subject → topic → lessons.
 ///
 /// Port of `src/pages/dashboard/VideoLessonsView.jsx`. A senior student walks
-/// down their own shelf: SSS 1–3, then a subject, then a topic taken straight
-/// from the question bank, landing on the lessons filed under it — several per
-/// topic, each from a different YouTube expert. The search box shortcuts the
-/// walk and matches topics anywhere in the library.
+/// down their own shelf: SSS 1–3, Practicals or UTME, then a subject, then a
+/// topic, landing on the lessons filed under it — several per topic, each from a
+/// different YouTube expert. The search box shortcuts the walk and matches
+/// topics anywhere in the library.
+///
+/// Every list on the way down is built from the lessons that exist, so a student
+/// never taps into an empty room: only subjects we have filmed appear, and only
+/// their stocked topics.
 ///
 /// Junior (BECE/JSS) students keep the flat grid: the class shelves are a senior
 /// syllabus idea, and there are no JSS-tagged lessons to hang off them. Padlocks
@@ -49,12 +53,9 @@ class _LessonsScreenState extends State<LessonsScreen> {
   /// published while a student sits on a topic should appear under them.
   String? _topicName;
 
+  /// The senior pick-list, which orders the subject grid. Empty until the first
+  /// read lands — the grid shows a skeleton until then.
   List<Subject> _subjects = const [];
-  List<String> _bankTopics = const [];
-  bool _loadingTopics = false;
-
-  /// Reveal syllabus topics with no lessons yet, alongside the stocked ones.
-  bool _showAllTopics = false;
 
   /// Lessons already credited this session. The backend is idempotent per video,
   /// but this saves a needless round trip when a student reopens one.
@@ -77,25 +78,10 @@ class _LessonsScreenState extends State<LessonsScreen> {
     setState(() => _subjects = subjects);
   }
 
-  Future<void> _openSubject(Subject subject) async {
-    setState(() {
-      _subject = subject;
-      _topicName = null;
-      _bankTopics = const [];
-      _showAllTopics = false;
-      _loadingTopics = true;
-    });
-
-    // The topic list is the question bank's, not the videos' — a student
-    // browsing Mathematics sees the syllabus, with lessons hanging off the
-    // topics that have them.
-    final topics = await context.read<VideoRepository>().bankTopics(subject.name);
-    if (!mounted) return;
-    setState(() {
-      _bankTopics = topics;
-      _loadingTopics = false;
-    });
-  }
+  void _openSubject(Subject subject) => setState(() {
+        _subject = subject;
+        _topicName = null;
+      });
 
   Future<void> _play(LessonVideo video) async {
     final session = context.read<SessionController>();
@@ -185,15 +171,15 @@ class _LessonsScreenState extends State<LessonsScreen> {
       final forSubject = all
           .where((v) => v.matchesClass(_class) && v.subject == _subject!.name)
           .toList();
-      final shelves = VideoRepository.buildShelves(_bankTopics, forSubject);
+      final shelves = VideoRepository.buildShelves(forSubject);
 
       final wanted = _topicName;
       if (wanted != null) {
         return _lessonList(_shelfFor(shelves, wanted), access: access);
       }
-      return _topicList(shelves);
+      return _topicList(shelves, loading: loading);
     }
-    if (_class != null) return _subjectGrid(all);
+    if (_class != null) return _subjectGrid(all, loading: loading);
     return _classGrid(all, loading: loading);
   }
 
@@ -224,35 +210,37 @@ class _LessonsScreenState extends State<LessonsScreen> {
   Widget _classGrid(List<LessonVideo> all, {required bool loading}) => _page([
         const PageHeader(
           title: 'Video Lessons',
-          subtitle: 'Pick your class, then browse subject by subject and topic '
-              'by topic.',
+          subtitle: 'Pick your class or track, then browse subject by subject '
+              'and topic by topic.',
         ),
         _searchBar(),
         AppCard(
-          child: Row(
-            children: [
-              for (final level in ClassLevel.values) ...[
-                if (level != ClassLevel.values.first)
-                  const SizedBox(width: Tokens.s2),
-                Expanded(
-                  child: _ClassTile(
-                    level: level,
-                    caption: loading
-                        ? 'Loading…'
-                        : _lessonCount(
-                            all.where((v) => v.matchesClass(level)).length,
-                          ),
-                    onTap: () => setState(() => _class = level),
-                  ),
-                ),
-              ],
-            ],
+          // Five shelves no longer fit a row on a handset, so they wrap: the
+          // three classes on the first line, the two tracks under them.
+          child: GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            gridDelegate: _classGridDelegate,
+            itemCount: ClassLevel.values.length,
+            itemBuilder: (context, i) {
+              final level = ClassLevel.values[i];
+              return _ClassTile(
+                level: level,
+                caption: loading
+                    ? 'Loading…'
+                    : _lessonCount(
+                        all.where((v) => v.matchesClass(level)).length,
+                      ),
+                onTap: () => setState(() => _class = level),
+              );
+            },
           ),
         ),
       ]);
 
   // ─── Level 2: subjects within a class ────────────────────────────────────
-  Widget _subjectGrid(List<LessonVideo> all) {
+  Widget _subjectGrid(List<LessonVideo> all, {required bool loading}) {
     final level = _class!;
     final counts = <String, int>{};
     for (final v in all) {
@@ -260,6 +248,17 @@ class _LessonsScreenState extends State<LessonsScreen> {
         counts[v.subject!] = (counts[v.subject!] ?? 0) + 1;
       }
     }
+
+    // Only the subjects we have actually filmed for this shelf. The pick-list
+    // sets the order; a lesson filed under a subject that has since left it
+    // still gets a tile at the end, rather than becoming unreachable.
+    final listed = {for (final s in _subjects) s.name};
+    final stocked = [
+      ..._subjects.where((s) => counts.containsKey(s.name)),
+      ...Subjects.decorate(
+        counts.keys.where((name) => !listed.contains(name)).toList()..sort(),
+      ),
+    ];
 
     return _page([
       _BackLink(label: 'Classes', onTap: () => setState(() => _class = null)),
@@ -270,30 +269,29 @@ class _LessonsScreenState extends State<LessonsScreen> {
       ),
       _searchBar(),
       AppCard(
-        child: _subjects.isEmpty
+        child: loading || _subjects.isEmpty
             ? const SkeletonListItem(lines: 2)
-            : SubjectGrid(
-                subjects: _subjects,
-                captionOf: (s) {
-                  final count = counts[s.name] ?? 0;
-                  return count == 0 ? 'Coming soon' : _lessonCount(count);
-                },
-                onTap: _openSubject,
-              ),
+            : stocked.isEmpty
+                ? EmptyState(
+                    icon: Icons.movie_outlined,
+                    title: 'No lessons yet',
+                    message: 'Nothing has been filmed for ${level.label} so far '
+                        '— try another class, or check back soon.',
+                  )
+                : SubjectGrid(
+                    subjects: stocked,
+                    captionOf: (s) => _lessonCount(counts[s.name]!),
+                    onTap: _openSubject,
+                  ),
       ),
     ]);
   }
 
   // ─── Level 3: topics within a subject ────────────────────────────────────
-  Widget _topicList(List<TopicShelf> shelves) {
+  Widget _topicList(List<TopicShelf> shelves, {required bool loading}) {
     final scheme = Theme.of(context).colorScheme;
     final subject = _subject!;
     final level = _class!;
-
-    final stocked = shelves.where((s) => s.hasVideos).toList();
-    // Default to the shelves that actually have something on them; the syllabus
-    // in full is one tap away, so a student never hits a wall of empty topics.
-    final visible = _showAllTopics || stocked.isEmpty ? shelves : stocked;
 
     return _page([
       _BackLink(
@@ -309,7 +307,7 @@ class _LessonsScreenState extends State<LessonsScreen> {
         leading: Icon(subject.icon, size: 20, color: subject.color),
       ),
       _searchBar(),
-      if (_loadingTopics)
+      if (loading)
         AppCard(
           child: Column(
             children: [
@@ -319,52 +317,32 @@ class _LessonsScreenState extends State<LessonsScreen> {
           ),
         )
       else if (shelves.isEmpty)
+        // Only reachable if the last lesson under a subject is pulled while the
+        // student is standing on it — the grid behind them never offers one.
         const AppCard(
           child: EmptyState(
-            icon: Icons.list_alt_rounded,
-            title: 'No topics yet',
-            message: 'Ask your admin to add questions with a Topic tag for this '
-                'subject first.',
+            icon: Icons.movie_outlined,
+            title: 'No lessons yet',
+            message: 'Nothing has been filmed for this subject yet — check back '
+                'soon.',
           ),
         )
-      else ...[
+      else
         AppCard(
           padding: EdgeInsets.zero,
           child: Column(
             children: [
-              for (var i = 0; i < visible.length; i++) ...[
+              for (var i = 0; i < shelves.length; i++) ...[
                 if (i > 0) Divider(height: 1, color: scheme.outlineVariant),
                 _TopicRow(
-                  shelf: visible[i],
+                  shelf: shelves[i],
                   accent: subject.color,
-                  onTap: () => setState(() => _topicName = visible[i].topic),
+                  onTap: () => setState(() => _topicName = shelves[i].topic),
                 ),
               ],
             ],
           ),
         ),
-        if (stocked.isNotEmpty && stocked.length < shelves.length)
-          Padding(
-            padding: const EdgeInsets.only(top: Tokens.s3),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () => setState(() => _showAllTopics = !_showAllTopics),
-                icon: Icon(
-                  _showAllTopics
-                      ? Icons.visibility_off_rounded
-                      : Icons.list_rounded,
-                  size: 15,
-                ),
-                label: Text(
-                  _showAllTopics
-                      ? 'Show only topics with lessons'
-                      : 'Show all ${shelves.length} syllabus topics',
-                ),
-              ),
-            ),
-          ),
-      ],
     ]);
   }
 
@@ -452,6 +430,15 @@ class _LessonsScreenState extends State<LessonsScreen> {
 
   static String _lessonCount(int n) => '$n lesson${n == 1 ? '' : 's'}';
 
+  /// The class tiles size like the subject tiles a level down, only taller: a
+  /// two-line label such as "Practicals" has to clear the lesson count under it.
+  static const _classGridDelegate = SliverGridDelegateWithMaxCrossAxisExtent(
+    maxCrossAxisExtent: 132,
+    mainAxisSpacing: Tokens.s2,
+    crossAxisSpacing: Tokens.s2,
+    childAspectRatio: 0.86,
+  );
+
   /// The web's grid is `minmax(240px, 1fr)`. On a phone that is one column, which
   /// wastes the screen — 178px gives two, with the 16:9 thumbnail still legible.
   static const _gridDelegate = SliverGridDelegateWithMaxCrossAxisExtent(
@@ -462,7 +449,7 @@ class _LessonsScreenState extends State<LessonsScreen> {
   );
 }
 
-/// `.video-class-card` — one SSS shelf.
+/// `.video-class-card` — one shelf: a class, or the Practicals/UTME track.
 class _ClassTile extends StatelessWidget {
   const _ClassTile({
     required this.level,
@@ -498,17 +485,22 @@ class _ClassTile extends StatelessWidget {
           ),
           padding: const EdgeInsets.symmetric(
             horizontal: Tokens.s2,
-            vertical: 14,
+            vertical: Tokens.s3,
           ),
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(level.icon, size: 24, color: level.color),
               const SizedBox(height: 6),
               Text(
                 level.label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 13.5,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w800,
+                  height: 1.25,
                   color: scheme.onSurface,
                 ),
               ),
@@ -560,7 +552,7 @@ class _BackLink extends StatelessWidget {
       );
 }
 
-/// `.sched-row` — one topic, with its subject-coloured spine and lesson count.
+/// `.sched-row` — one stocked topic, with its subject-coloured spine and count.
 class _TopicRow extends StatelessWidget {
   const _TopicRow({
     required this.shelf,
@@ -579,50 +571,41 @@ class _TopicRow extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      child: Opacity(
-        // A topic with no lessons yet is dimmed but still tappable — it leads to
-        // the "coming soon" shelf rather than a dead row.
-        opacity: shelf.hasVideos ? 1 : 0.6,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: Tokens.minTouchTarget),
-          padding: const EdgeInsets.symmetric(
-            horizontal: Tokens.s4,
-            vertical: Tokens.s3,
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 3,
-                height: 22,
-                decoration: BoxDecoration(
-                  color: accent,
-                  borderRadius: BorderRadius.circular(2),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: Tokens.minTouchTarget),
+        padding: const EdgeInsets.symmetric(
+          horizontal: Tokens.s4,
+          vertical: Tokens.s3,
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 3,
+              height: 22,
+              decoration: BoxDecoration(
+                color: accent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: Tokens.s3),
+            Expanded(
+              child: Text(
+                shelf.topic,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurface,
                 ),
               ),
-              const SizedBox(width: Tokens.s3),
-              Expanded(
-                child: Text(
-                  shelf.topic,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: scheme.onSurface,
-                  ),
-                ),
-              ),
-              AppBadge(
-                label: shelf.hasVideos
-                    ? '$count video${count == 1 ? '' : 's'}'
-                    : 'Coming soon',
-              ),
-              const SizedBox(width: Tokens.s2),
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 18,
-                color: scheme.onSurfaceVariant,
-              ),
-            ],
-          ),
+            ),
+            AppBadge(label: '$count video${count == 1 ? '' : 's'}'),
+            const SizedBox(width: Tokens.s2),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: scheme.onSurfaceVariant,
+            ),
+          ],
         ),
       ),
     );

@@ -155,9 +155,7 @@ class NltcApp extends StatelessWidget {
         Provider<BroadcastRepository>(
           create: (context) => BroadcastRepository(api: context.read()),
         ),
-        Provider<VideoRepository>(
-          create: (context) => VideoRepository(cache: context.read()),
-        ),
+        Provider<VideoRepository>(create: (_) => VideoRepository()),
         Provider<MockExamRepository>(create: (_) => MockExamRepository()),
         Provider<SupportRepository>(create: (_) => SupportRepository()),
         Provider<ExamResultRepository>(

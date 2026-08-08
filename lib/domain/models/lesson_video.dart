@@ -2,19 +2,50 @@ import 'package:flutter/material.dart';
 
 import 'app_user.dart' show tsToMs;
 
-/// A senior class shelf — the first step of the lesson walk.
+/// A shelf on the front page of the library — the first step of the walk.
+///
+/// SSS 1–3 are the classes a senior student sits in. Practicals and UTME cut
+/// across all three: the lab work every science student does, and the exam they
+/// all end up writing. A lesson can be filed under any mix of the five.
 enum ClassLevel {
   sss1('sss1', 'SSS 1', Icons.spa_rounded, Color(0xFF16B364)),
   sss2('sss2', 'SSS 2', Icons.eco_rounded, Color(0xFF2E90FA)),
-  sss3('sss3', 'SSS 3', Icons.park_rounded, Color(0xFF7A5AF8));
+  sss3('sss3', 'SSS 3', Icons.park_rounded, Color(0xFF7A5AF8)),
+  practicals(
+    'practicals',
+    'Practicals',
+    Icons.biotech_rounded,
+    Color(0xFFF79009),
+    holdsUntagged: false,
+  ),
+  utme(
+    'utme',
+    'UTME',
+    Icons.school_rounded,
+    Color(0xFFF04438),
+    holdsUntagged: false,
+  );
 
-  const ClassLevel(this.wireName, this.label, this.icon, this.color);
+  const ClassLevel(
+    this.wireName,
+    this.label,
+    this.icon,
+    this.color, {
+    this.holdsUntagged = true,
+  });
 
   /// The value stored in `videos/{id}.classLevels[]`.
   final String wireName;
   final String label;
   final IconData icon;
   final Color color;
+
+  /// Does a lesson with no `classLevels` land on this shelf?
+  ///
+  /// The SSS shelves predate the field, so a legacy upload stays on them rather
+  /// than disappearing. Practicals and UTME came after: nothing was ever meant
+  /// for them by accident, so they hold only what an admin filed there.
+  final bool holdsUntagged;
 
   static ClassLevel? byWireName(String name) {
     final needle = name.toLowerCase().trim();
@@ -55,9 +86,9 @@ class LessonVideo {
   /// A question-bank topic tag. Null on lessons an admin never filed.
   final String? topic;
 
-  /// Which SSS shelves this lesson sits on. Empty means every one — the field
-  /// arrived after the first uploads, and a legacy lesson should stay visible
-  /// rather than vanish. Same forgiving default as the web's `videoClassKeys`.
+  /// Which shelves this lesson sits on. Empty means the SSS ones — same
+  /// forgiving default as the web's `videoClassKeys`, and see
+  /// [ClassLevel.holdsUntagged] for why the two newer shelves opt out.
   final Set<ClassLevel> classLevels;
 
   /// The YouTube expert behind the lesson, credited on the card and the player.
@@ -83,9 +114,12 @@ class LessonVideo {
     return tag == null || tag.isEmpty ? kUntaggedTopic : tag;
   }
 
-  /// Is this lesson on [level]'s shelf? An unfiled lesson is on all of them.
-  bool matchesClass(ClassLevel? level) =>
-      level == null || classLevels.isEmpty || classLevels.contains(level);
+  /// Is this lesson on [level]'s shelf? Null is the whole library.
+  bool matchesClass(ClassLevel? level) {
+    if (level == null) return true;
+    if (classLevels.isEmpty) return level.holdsUntagged;
+    return classLevels.contains(level);
+  }
 
   /// Free-text match across everything a student might type — topic first,
   /// since searching by topic is what the box is for.

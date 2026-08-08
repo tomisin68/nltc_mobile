@@ -17,22 +17,41 @@ void main() {
       expect(video.matchesClass(ClassLevel.sss2), isFalse);
     });
 
-    test('a legacy upload with no classLevels sits on every shelf', () {
+    test('a legacy upload with no classLevels sits on the SSS shelves', () {
       final video = _video({});
 
       expect(video.classLevels, isEmpty);
-      for (final level in ClassLevel.values) {
-        expect(video.matchesClass(level), isTrue);
+      for (final level in [ClassLevel.sss1, ClassLevel.sss2, ClassLevel.sss3]) {
+        expect(video.matchesClass(level), isTrue, reason: level.wireName);
       }
     });
 
-    test('junk keys are dropped, which puts the lesson back on every shelf', () {
+    test('but not on Practicals or UTME, which are opt-in', () {
+      final video = _video({});
+
+      expect(video.matchesClass(ClassLevel.practicals), isFalse);
+      expect(video.matchesClass(ClassLevel.utme), isFalse);
+    });
+
+    test('a lesson filed under a track sits on that track alone', () {
+      final video = _video({
+        'classLevels': ['utme'],
+      });
+
+      expect(video.classLevels, {ClassLevel.utme});
+      expect(video.matchesClass(ClassLevel.utme), isTrue);
+      expect(video.matchesClass(ClassLevel.sss3), isFalse);
+    });
+
+    test('junk keys are dropped, which puts the lesson back on the SSS shelves',
+        () {
       final video = _video({
         'classLevels': ['jss1', 42, ''],
       });
 
       expect(video.classLevels, isEmpty);
       expect(video.matchesClass(ClassLevel.sss2), isTrue);
+      expect(video.matchesClass(ClassLevel.practicals), isFalse);
     });
 
     test('wire names are matched case-insensitively', () {
@@ -120,66 +139,51 @@ void main() {
   });
 
   group('VideoRepository.buildShelves', () {
-    const bank = ['Algebra', 'Quadratic Equations', 'Trigonometry'];
+    test('shelves only the topics that have lessons, A–Z', () {
+      final shelves = VideoRepository.buildShelves([
+        _video({'topic': 'Trigonometry'}),
+        _video({'topic': 'Algebra'}),
+      ]);
 
-    test('lists every bank topic, even the ones with no lessons yet', () {
-      final shelves = VideoRepository.buildShelves(bank, const []);
+      expect(shelves.map((s) => s.topic), ['Algebra', 'Trigonometry']);
+      expect(shelves.every((s) => s.hasVideos), isTrue);
+    });
 
-      expect(
-        shelves.map((s) => s.topic),
-        ['Algebra', 'Quadratic Equations', 'Trigonometry'],
-      );
-      expect(shelves.every((s) => !s.hasVideos), isTrue);
+    test('no lessons, no shelves', () {
+      expect(VideoRepository.buildShelves(const []), isEmpty);
     });
 
     test('groups several experts onto the one topic', () {
-      final shelves = VideoRepository.buildShelves(bank, [
+      final shelves = VideoRepository.buildShelves([
         _video({'topic': 'Algebra', 'teacher': 'Mr A'}),
         _video({'topic': 'algebra', 'teacher': 'Ms B'}),
       ]);
-      final algebra = shelves.firstWhere((s) => s.topic == 'Algebra');
 
-      expect(algebra.videos, hasLength(2));
-      expect(algebra.expertCount, 2);
+      expect(shelves, hasLength(1));
+      // The first spelling seen labels the shelf.
+      expect(shelves.single.topic, 'Algebra');
+      expect(shelves.single.videos, hasLength(2));
+      expect(shelves.single.expertCount, 2);
     });
 
     test('counts one expert once, however many lessons they filmed', () {
-      final shelves = VideoRepository.buildShelves(bank, [
+      final shelves = VideoRepository.buildShelves([
         _video({'topic': 'Algebra', 'teacher': 'Mr A'}),
         _video({'topic': 'Algebra', 'teacher': 'Mr A'}),
       ]);
 
-      expect(shelves.firstWhere((s) => s.topic == 'Algebra').expertCount, 1);
+      expect(shelves.single.expertCount, 1);
     });
 
-    test('keeps a lesson whose topic left the bank, sorted after it', () {
-      final shelves = VideoRepository.buildShelves(bank, [
+    test('shelves untagged lessons under General, last', () {
+      final shelves = VideoRepository.buildShelves([
+        _video({}),
         _video({'topic': 'Surds'}),
+        _video({'topic': 'Algebra'}),
       ]);
 
-      expect(
-        shelves.map((s) => s.topic),
-        ['Algebra', 'Quadratic Equations', 'Trigonometry', 'Surds'],
-      );
+      expect(shelves.map((s) => s.topic), ['Algebra', 'Surds', kUntaggedTopic]);
       expect(shelves.last.videos, hasLength(1));
-    });
-
-    test('shelves untagged lessons under General', () {
-      final shelves = VideoRepository.buildShelves(bank, [_video({})]);
-
-      expect(
-        shelves.firstWhere((s) => s.topic == kUntaggedTopic).videos,
-        hasLength(1),
-      );
-    });
-
-    test('works with no bank at all — the lessons shelve themselves', () {
-      final shelves = VideoRepository.buildShelves(const [], [
-        _video({'topic': 'Surds'}),
-      ]);
-
-      expect(shelves, hasLength(1));
-      expect(shelves.single.topic, 'Surds');
     });
   });
 }
