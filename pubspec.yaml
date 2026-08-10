@@ -51,6 +51,11 @@ dependencies:
   video_player: ^2.11.1
   youtube_player_flutter: ^10.0.1
   flutter_widget_from_html_core: ^0.17.2
+  # Maths notation is drawn, not typeset: a fraction is a two-row table and a
+  # matrix a bracketed one, and `HtmlWidget` renders both as blocks that would
+  # break the line they sit in. `question_math.dart` reads those elements
+  # directly and draws them inline instead, which needs the DOM types.
+  html: ^0.15.6
   # Live classes run on the same Agora channels the website joins, natively —
   # a WebView cannot hold a reliable RTC session on mid-range Android.
   agora_rtc_engine: ^6.5.2

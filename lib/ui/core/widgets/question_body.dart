@@ -3,6 +3,7 @@ import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart
 
 import '../../../domain/models/question.dart';
 import '../theme/app_palette.dart';
+import 'question_math.dart';
 
 /// Renders a question's text, and its diagram when it has one.
 ///
@@ -12,6 +13,10 @@ import '../theme/app_palette.dart';
 /// `dangerouslySetInnerHTML`; rendering it as plain text here would show a
 /// student `H<sub>2</sub>O` instead of H₂O, so the same markup goes through an
 /// HTML widget with an allowlist over it.
+///
+/// Maths papers go further: a fraction, a matrix and a surd are drawn with
+/// inline CSS the HTML widget cannot lay out, so [QuestionMath] takes those
+/// three over and draws them as real widgets. See that file for why.
 class QuestionBody extends StatelessWidget {
   const QuestionBody({
     super.key,
@@ -131,13 +136,23 @@ class RichQuestionText extends StatelessWidget {
           : Text(html, style: style);
     }
 
+    // Notation stands two lines tall. Without the extra leading, a fraction on
+    // one line touches the fraction on the next; ordinary prose keeps the
+    // tighter setting it was given.
+    final base = style ?? const TextStyle();
+    final effective = QuestionMath.hasNotation(html)
+        ? base.copyWith(height: (base.height ?? 1.4) + 0.35)
+        : base;
+
     return HtmlWidget(
       html,
-      textStyle: style ?? const TextStyle(),
-      customWidgetBuilder: (element) =>
-          QuestionBody._blocked.contains(element.localName)
-              ? const SizedBox.shrink()
-              : null,
+      textStyle: effective,
+      customWidgetBuilder: (element) {
+        if (QuestionBody._blocked.contains(element.localName)) {
+          return const SizedBox.shrink();
+        }
+        return QuestionMath.build(element, style: effective);
+      },
       // Nothing in a question should navigate anywhere.
       onTapUrl: (_) async => true,
     );
