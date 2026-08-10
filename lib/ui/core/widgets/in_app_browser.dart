@@ -48,6 +48,23 @@ Future<String?> openInAppBrowser(
   );
 }
 
+/// Hands [url] to the system when it is not something a WebView can draw — a
+/// bank app, a wallet, a dialer, an email address — and reports whether it did.
+///
+/// Every WebView in the app asks this before navigating, so a link behaves the
+/// same whether the student met it in a chat, in the blog, or mid-checkout.
+bool handOffToSystem(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return false;
+  if (uri.scheme == 'http' || uri.scheme == 'https') return false;
+
+  launchUrl(uri, mode: LaunchMode.externalApplication).catchError((_) {
+    showToast('No app can open that link.', variant: ToastVariant.error);
+    return false;
+  });
+  return true;
+}
+
 /// A minimal browser: the page, where it came from, and a way back.
 class InAppBrowser extends StatefulWidget {
   const InAppBrowser({
@@ -158,18 +175,7 @@ class _InAppBrowserState extends State<InAppBrowser> {
   }
 
   NavigationDecision _onNavigation(NavigationRequest request) {
-    final uri = Uri.tryParse(request.url);
-    if (uri == null) return NavigationDecision.navigate;
-
-    if (uri.scheme != 'http' && uri.scheme != 'https') {
-      // A bank app, a wallet, a dialer. The WebView would only show an error.
-      launchUrl(uri, mode: LaunchMode.externalApplication).catchError((_) {
-        showToast('No app can open that link.', variant: ToastVariant.error);
-        return false;
-      });
-      return NavigationDecision.prevent;
-    }
-
+    if (handOffToSystem(request.url)) return NavigationDecision.prevent;
     if (_maybeClose(request.url)) return NavigationDecision.prevent;
     return NavigationDecision.navigate;
   }

@@ -12,6 +12,7 @@ import '../core/state/practice_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/widgets/score_ring.dart';
 import '../practice/exam_setup_sheet.dart';
+import '../reviews/review_prompt.dart';
 import 'exam_review_screen.dart';
 
 /// Per-subject scores for a multi-subject paper.
@@ -309,7 +310,19 @@ class _ExamResultScreenState extends State<ExamResultScreen> {
     // The single point where a new attempt exists — refreshing history here
     // keeps the dashboard and activity tab current without either polling.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<ActivityController>().reload();
+      if (!mounted) return;
+      context.read<ActivityController>().reload();
+
+      // Asked here rather than from Settings because this is the one screen
+      // where a student is reliably pleased with us. It declines itself when
+      // the score is ordinary, when they have answered before, or when they
+      // have been asked recently — so there is nothing to check first.
+      maybeAskForReview(
+        context,
+        score: attempt.score,
+        total: attempt.total,
+        subject: config.isMultiSubject ? 'that paper' : config.subject,
+      );
     });
   }
 

@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/services/prefs_service.dart';
 import '../../domain/models/access_state.dart';
 import '../../domain/models/app_user.dart';
 import '../../domain/models/gamification.dart';
+import '../../domain/models/wrapped_stats.dart';
 import '../core/state/dashboard_badge_controller.dart';
 import '../core/state/dashboard_controller.dart';
 import '../core/state/notification_controller.dart';
@@ -14,6 +16,7 @@ import '../core/theme/app_palette.dart';
 import '../core/widgets/brand_mark.dart';
 import '../core/widgets/ruled_paper.dart';
 import '../support/support_sheet.dart';
+import '../wrapped/wrapped_screen.dart';
 
 /// The student sidebar — a direct port of the web app's "exercise book" spine
 /// (`ds-*` classes in `src/components/layout/SidebarStudent.css`).
@@ -35,6 +38,7 @@ class DashboardSidebar extends StatelessWidget {
     DashboardView.home,
     DashboardView.profile,
     DashboardView.settings,
+    DashboardView.blog,
   };
 
   /// Junior track. Matches `isJSS` everywhere on the web — the string list is
@@ -120,7 +124,10 @@ class DashboardSidebar extends StatelessWidget {
         _link(context, DashboardView.announcements, Icons.campaign_rounded,
             'Announcements', locked,
             badge: _Badge.notifications),
+        _link(context, DashboardView.blog, Icons.article_rounded, 'Blog',
+            locked),
         const _NavSection(number: '03', label: 'My Account'),
+        const _WrappedLink(),
         _link(context, DashboardView.profile, Icons.badge_rounded, 'My Profile',
             locked),
         _link(context, DashboardView.settings, Icons.settings_rounded,
@@ -154,7 +161,10 @@ class DashboardSidebar extends StatelessWidget {
         _link(context, DashboardView.announcements, Icons.campaign_rounded,
             'Announcements', locked,
             badge: _Badge.notifications),
+        _link(context, DashboardView.blog, Icons.article_rounded, 'Blog',
+            locked),
         const _NavSection(number: '03', label: 'My Account'),
+        const _WrappedLink(),
         _link(context, DashboardView.profile, Icons.badge_rounded, 'My Profile',
             locked),
         _link(context, DashboardView.settings, Icons.settings_rounded,
@@ -793,6 +803,90 @@ class _NavLink extends StatelessWidget {
 /// locked account, so gating it behind the same paywall it exists to explain
 /// would be exactly backwards. Mirrors the sidebar link the website added
 /// alongside its floating widget.
+/// "My Wrapped" — a route rather than a [DashboardView].
+///
+/// Kept off the view enum on purpose: that enum is one-for-one with the web's
+/// `VIEW_TITLES`, and the recap is a full-screen story that would fight the
+/// dashboard's topbar and drawer for the screen anyway.
+class _WrappedLink extends StatelessWidget {
+  const _WrappedLink();
+
+  /// Whether the month that just ended has a recap the student has not opened.
+  static bool _isUnseen(PrefsService prefs) {
+    final now = DateTime.now();
+    return prefs.wrappedSeen != monthKeyFor(DateTime(now.year, now.month - 1));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final unseen = _isUnseen(context.read<PrefsService>());
+
+    return InkWell(
+      onTap: () {
+        final navigator = Navigator.of(context);
+        navigator.pop();
+        navigator.push(WrappedScreen.route());
+      },
+      child: Container(
+        constraints: const BoxConstraints(minHeight: Tokens.minTouchTarget),
+        padding: const EdgeInsets.only(left: 26, right: 16),
+        child: Row(
+          children: [
+            Container(
+              width: 26,
+              height: 26,
+              decoration: BoxDecoration(
+                color: isDark
+                    ? scheme.surfaceContainerHigh
+                    : BlueprintPalette.b50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.auto_awesome_rounded,
+                size: 14,
+                color: isDark ? scheme.onSurfaceVariant : BlueprintPalette.text3,
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                'My Wrapped',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (unseen)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: BlueprintPalette.b500,
+                  borderRadius: BorderRadius.circular(100),
+                ),
+                child: const Text(
+                  'NEW',
+                  style: TextStyle(
+                    fontSize: 8.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.6,
+                    color: BlueprintPalette.white,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SupportLink extends StatelessWidget {
   const _SupportLink();
 

@@ -16,6 +16,7 @@ enum DashboardView {
   mockExams('Mock Exams'),
   leaderboard('Leaderboard'),
   announcements('Announcements'),
+  blog('Blog'),
   notes('Study Notes'),
   settings('Settings'),
   bece('BECE Practice'),

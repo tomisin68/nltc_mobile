@@ -1,14 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/repositories/attempt_repository.dart';
+import '../../data/services/push_service.dart';
+import '../../domain/models/app_notification.dart';
 import '../core/state/activity_controller.dart';
 import '../core/state/dashboard_controller.dart';
 import '../core/state/practice_controller.dart';
 import '../core/state/presence_controller.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
+import '../core/widgets/in_app_browser.dart';
 import '../announcements/announcements_screen.dart';
+import '../blog/blog_screen.dart';
 import '../cbt/bece_practice_screen.dart';
 import '../cbt/cbt_practice_screen.dart';
 import '../chat/chat_screen.dart';
@@ -22,7 +28,6 @@ import '../quicktests/quick_tests_screen.dart';
 import '../quiz/official_quiz_screen.dart';
 import '../profile/profile_screen.dart';
 import '../settings/settings_screen.dart';
-import '../support/shake_to_report.dart';
 import '../support/support_fab.dart';
 import 'access_banners.dart';
 import 'dashboard_sidebar.dart';
@@ -43,11 +48,23 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
+  StreamSubscription<AppNotification>? _tapSub;
+
+  /// The last push acted on. A tap that launched the app from cold arrives both
+  /// on the stream and as [PushService.pendingTap], and neither can be dropped
+  /// without losing the other case — so the id decides.
+  String? _handledTap;
+
   /// `FREE_VIEWS` on the web — reachable even when the account is locked.
+  ///
+  /// The blog is on the list because it is published openly on the website:
+  /// locking a student out of something they could read in any browser would
+  /// only teach them to leave the app to read it.
   static const _freeViews = {
     DashboardView.home,
     DashboardView.profile,
     DashboardView.settings,
+    DashboardView.blog,
   };
 
   @override
@@ -64,13 +81,37 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       // push anything finished offline the last time the app was open.
       context.read<ActivityController>().reload();
       context.read<AttemptRepository>().syncPending();
+
+      // A student who taps "New on NLTC Blog" in their tray expects the
+      // article, not the dashboard. Wired here because the shell is the first
+      // thing with a Navigator that outlives every view.
+      final push = context.read<PushService>();
+      _tapSub = push.taps.listen(_openFromPush);
+      final pending = push.pendingTap;
+      if (pending != null) _openFromPush(pending);
     });
   }
 
   @override
   void dispose() {
+    _tapSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// Follows a tapped push, when it points somewhere the app can go.
+  ///
+  /// Only blog links are followed. The other routes the backend attaches are
+  /// website URLs (`/student.html?view=chat`) that would land the student on a
+  /// login page they have no business seeing, so those still just open the app.
+  void _openFromPush(AppNotification notification) {
+    if (!mounted || notification.id == _handledTap) return;
+    _handledTap = notification.id;
+    context.read<PushService>().clearPendingTap(notification.id);
+
+    final article = blogUrlForRoute(notification.route);
+    if (article == null) return;
+    openInAppBrowser(context, article, title: 'NLTC Blog');
   }
 
   /// A backgrounded app gets no timer callbacks, so a trial that ran out
@@ -99,45 +140,40 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final viewIsFree = _freeViews.contains(view);
     final locked = access.isLocked && !viewIsFree;
 
-    // Wraps the whole shell, not a screen: the moment worth reporting is the
-    // moment something looked wrong, and that is never the page with the
-    // feedback button on it.
-    return ShakeToReport(
-      child: Scaffold(
-        drawer: const DashboardSidebar(),
-        appBar: DashboardTopbar(title: view.title),
-        // Deliberately outside the `locked` branch below: a student who cannot
-        // get in is the one with the most urgent reason to reach somebody.
-        //
-        // Messages is the one exception. It builds its own Scaffold with a "new
-        // conversation" button in the same corner, so support yields it there and
-        // stays reachable from the sidebar instead — which costs nothing, because
-        // Messages is not a free view and a locked account cannot open it anyway.
-        floatingActionButton: view == DashboardView.chat
-            ? null
-            : const SupportFab(),
-        body: SafeArea(
-          top: false,
-          child: locked
-              ? LockedView(access: access)
-              : Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(
-                        left: Tokens.s4,
-                        right: Tokens.s4,
-                        top: Tokens.s3,
-                      ),
-                      child: AccessBanners(
-                        access: access,
-                        view: view,
-                        viewIsFree: viewIsFree,
-                      ),
+    return Scaffold(
+      drawer: const DashboardSidebar(),
+      appBar: DashboardTopbar(title: view.title),
+      // Deliberately outside the `locked` branch below: a student who cannot
+      // get in is the one with the most urgent reason to reach somebody.
+      //
+      // Messages is the one exception. It builds its own Scaffold with a "new
+      // conversation" button in the same corner, so support yields it there and
+      // stays reachable from the sidebar instead — which costs nothing, because
+      // Messages is not a free view and a locked account cannot open it anyway.
+      floatingActionButton: view == DashboardView.chat
+          ? null
+          : const SupportFab(),
+      body: SafeArea(
+        top: false,
+        child: locked
+            ? LockedView(access: access)
+            : Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      left: Tokens.s4,
+                      right: Tokens.s4,
+                      top: Tokens.s3,
                     ),
-                    Expanded(child: _view(view)),
-                  ],
-                ),
-        ),
+                    child: AccessBanners(
+                      access: access,
+                      view: view,
+                      viewIsFree: viewIsFree,
+                    ),
+                  ),
+                  Expanded(child: _view(view)),
+                ],
+              ),
       ),
     );
   }
@@ -168,6 +204,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       DashboardView.lessons => LessonsScreen(key: key),
       DashboardView.leaderboard => LeaderboardScreen(key: key),
       DashboardView.announcements => AnnouncementsScreen(key: key),
+      DashboardView.blog => BlogScreen(key: key),
       DashboardView.notes => StudyNotesScreen(key: key),
       DashboardView.quickTest => QuickTestsScreen(key: key),
       DashboardView.mockExams => MockExamsScreen(key: key),

@@ -3,10 +3,12 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../domain/models/app_notification.dart';
+import '../blog/blog_screen.dart';
 import '../core/format.dart';
 import '../core/state/notification_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/widgets/empty_state.dart';
+import '../core/widgets/in_app_browser.dart';
 
 /// The notification inbox.
 ///
@@ -102,13 +104,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  void _open(AppNotification notification) {
+  Future<void> _open(AppNotification notification) async {
     context.read<NotificationController>().markRead(notification);
-    showModalBottomSheet<void>(
+    // The sheet closes with the article it wants opened, if it had one — the
+    // browser is pushed from here rather than from inside the sheet, which is
+    // gone by the time the new route is built.
+    final article = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       builder: (_) => _NotificationSheet(notification: notification),
     );
+    if (!mounted || article == null) return;
+    await openInAppBrowser(context, article, title: 'NLTC Blog');
   }
 }
 
@@ -158,7 +165,9 @@ class _NotificationTile extends StatelessWidget {
   static IconData _iconFor(String? category) => switch (category) {
         'chat_message' => Icons.forum_outlined,
         'class_reminder' || 'live_class' => Icons.videocam_outlined,
-        'blog_published' => Icons.article_outlined,
+        // `new_blog` is what the backend actually sends; the older name is kept
+        // for rows already sitting in a student's inbox.
+        'new_blog' || 'blog_published' => Icons.article_outlined,
         'payment' || 'subscription' => Icons.receipt_long_outlined,
         'welcome' => Icons.celebration_outlined,
         'center_announcement_alert' || 'announcement' => Icons.campaign_outlined,
@@ -270,6 +279,7 @@ class _NotificationSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
+    final article = blogUrlForRoute(notification.route);
 
     return SafeArea(
       child: Padding(
@@ -292,13 +302,35 @@ class _NotificationSheet extends StatelessWidget {
             const SizedBox(height: Tokens.s4),
             Text(notification.body, style: text.bodyLarge),
             const SizedBox(height: Tokens.s6),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Close'),
+            // A blog notification is an invitation to read something; a sheet
+            // showing the first 120 characters of it and nothing else is a dead
+            // end. The article opens inside the app rather than in the phone's
+            // browser, so coming back is one tap.
+            if (article != null) ...[
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => Navigator.of(context).pop(article),
+                  icon: const Icon(Icons.menu_book_rounded, size: 18),
+                  label: const Text('Read the article'),
+                ),
               ),
-            ),
+              const SizedBox(height: Tokens.s2),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Close'),
+                ),
+              ),
+            ] else
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Close'),
+                ),
+              ),
           ],
         ),
       ),

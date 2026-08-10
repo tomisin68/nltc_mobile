@@ -10,7 +10,11 @@ import '../core/state/dashboard_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
 
-/// The form a shake opens.
+/// The bug report form, opened from the support sheet.
+///
+/// Separate from a support conversation on purpose: this one is a filing, not a
+/// chat. Nobody replies, and in exchange the student writes one paragraph
+/// instead of waiting on an admin.
 ///
 /// Everything below the message box is collected rather than asked for. A
 /// student reporting "the lesson wouldn't play" has no idea what build they are
@@ -77,7 +81,7 @@ class _BugReportSheetState extends State<BugReportSheet> {
 
     setState(() => _sending = true);
 
-    // Which screen they were on when they shook the phone. More useful than
+    // Which screen they were on when they opened the form. More useful than
     // anything they are likely to type, and free to collect.
     final screen = context.read<DashboardController>().view.name;
     final api = context.read<ApiClient>();
@@ -135,9 +139,9 @@ class _BugReportSheetState extends State<BugReportSheet> {
             ),
             const SizedBox(height: Tokens.s2),
             Text(
-              'You shook your phone, so we assume something went wrong. Tell us '
-              'what you were doing and what happened — the screen you are on, '
-              'your app version and your device are attached automatically.',
+              'Tell us what you were doing and what happened. The screen you '
+              'came from, your app version and your device are attached '
+              'automatically, so there is nothing to look up.',
               style: TextStyle(
                 fontSize: 12.5,
                 height: 1.55,

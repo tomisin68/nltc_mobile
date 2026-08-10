@@ -14,6 +14,7 @@ import 'data/repositories/learning_profile_repository.dart';
 import 'data/repositories/live_repository.dart';
 import 'data/repositories/mock_exam_repository.dart';
 import 'data/repositories/notification_repository.dart';
+import 'data/repositories/platform_review_repository.dart';
 import 'data/repositories/presence_repository.dart';
 import 'data/repositories/profile_repository.dart';
 import 'data/repositories/question_report_repository.dart';
@@ -23,6 +24,7 @@ import 'data/repositories/study_note_repository.dart';
 import 'data/repositories/subject_repository.dart';
 import 'data/repositories/support_repository.dart';
 import 'data/repositories/video_repository.dart';
+import 'data/repositories/wrapped_repository.dart';
 import 'data/services/api_client.dart';
 import 'data/services/firestore_cache.dart';
 import 'data/services/link_preview_service.dart';
@@ -125,6 +127,12 @@ class NltcApp extends StatelessWidget {
         ),
         Provider<ProfileRepository>(create: (_) => ProfileRepository()),
         Provider<PresenceRepository>(create: (_) => PresenceRepository()),
+        Provider<PlatformReviewRepository>(
+          create: (_) => PlatformReviewRepository(),
+        ),
+        Provider<WrappedRepository>(
+          create: (context) => WrappedRepository(attempts: context.read()),
+        ),
         Provider<LearningProfileRepository>(
           create: (context) => LearningProfileRepository(
             api: context.read(),

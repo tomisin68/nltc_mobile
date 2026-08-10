@@ -11,6 +11,7 @@ import '../core/format.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
+import 'bug_report_sheet.dart';
 
 /// NLTC's real contact details, for a student who would rather call or email.
 ///
@@ -214,6 +215,18 @@ class _SupportSheetState extends State<SupportSheet> {
     }
   }
 
+  /// Hands off to the bug report form.
+  ///
+  /// This sheet closes first rather than stacking a second one on top of
+  /// itself: two modals deep, "close" stops meaning anything a student can
+  /// predict. The navigator's own context is captured before the pop so the
+  /// second sheet is not opened against a context that has just been torn down.
+  Future<void> _reportBug() async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    Navigator.of(context).pop();
+    await showBugReportSheet(navigator.context);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -308,6 +321,7 @@ class _SupportSheetState extends State<SupportSheet> {
                                 _launch(Uri(scheme: 'tel', path: tel)),
                             onEmail: () => _launch(
                                 Uri(scheme: 'mailto', path: _supportEmail)),
+                            onReportBug: _reportBug,
                             scroll: _scroll,
                           ),
                       },
@@ -537,6 +551,7 @@ class _FirstContact extends StatelessWidget {
     required this.onSend,
     required this.onCall,
     required this.onEmail,
+    required this.onReportBug,
     required this.scroll,
   });
 
@@ -553,6 +568,7 @@ class _FirstContact extends StatelessWidget {
   final VoidCallback onSend;
   final ValueChanged<String> onCall;
   final VoidCallback onEmail;
+  final VoidCallback onReportBug;
   final ScrollController scroll;
 
   @override
@@ -652,7 +668,60 @@ class _FirstContact extends StatelessWidget {
             label: Text(sending ? 'Sending…' : 'Send to support'),
           ),
         ),
-        const SizedBox(height: Tokens.s6),
+        const SizedBox(height: Tokens.s5),
+        // Bug reports used to be a shake of the whole phone. That fired in
+        // pockets, in bags and on bumpy roads far more often than it fired on
+        // purpose, so it lives here instead: one tap from the button that is
+        // already on every screen, and impossible to trigger by accident.
+        Container(
+          padding: const EdgeInsets.all(Tokens.s3),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(Tokens.rMd),
+            border: Border.all(color: scheme.outlineVariant),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Something in the app is broken?',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: scheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: Tokens.s1),
+              Text(
+                'File a bug report instead. Nobody replies to that one, but the '
+                'screen you came from, your app version and your device go with '
+                'it — which is usually what we need to fix the thing.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  height: 1.5,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: Tokens.s2),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: onReportBug,
+                  icon: const Icon(Icons.bug_report_rounded, size: 15),
+                  label: const Text('Report a bug'),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: Tokens.s4),
         Container(
           padding: const EdgeInsets.all(Tokens.s3),
           decoration: BoxDecoration(

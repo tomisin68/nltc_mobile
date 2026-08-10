@@ -26,6 +26,10 @@ class PrefsService {
   static const _kFcmToken = 'nltc.fcmToken';
   static const _kFocusTimer = 'nltc.focusTimer';
   static const _kFocusPreset = 'nltc.focusPreset';
+  static const _kReviewAskedAt = 'nltc.reviewAskedAt';
+  static const _kReviewAsks = 'nltc.reviewAsks';
+  static const _kReviewSettled = 'nltc.reviewSettled';
+  static const _kWrappedSeen = 'nltc.wrappedSeen';
 
   // ─── Theme ───────────────────────────────────────────────────────────────
 
@@ -141,4 +145,62 @@ class PrefsService {
 
   Future<void> setFocusPreset(int minutes) =>
       _prefs.setInt(_kFocusPreset, minutes);
+
+  // ─── Review prompt ───────────────────────────────────────────────────────
+
+  /// How many times the review prompt may ever appear before the app stops
+  /// asking. Two: one ask can be badly timed, a third is nagging.
+  static const maxReviewAsks = 2;
+
+  /// The quiet period between asks, long enough that the second one lands in a
+  /// different month's worth of studying rather than the same afternoon.
+  static const reviewAskGap = Duration(days: 30);
+
+  DateTime? get reviewAskedAt {
+    final ms = _prefs.getInt(_kReviewAskedAt);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  int get reviewAsks => _prefs.getInt(_kReviewAsks) ?? 0;
+
+  /// Set once the student has either left a review or said no — after which
+  /// the app never raises the subject again on its own. Settings still has the
+  /// card for anyone who changes their mind.
+  bool get reviewSettled => _prefs.getBool(_kReviewSettled) ?? false;
+
+  Future<void> markReviewAsked() async {
+    await _prefs.setInt(
+      _kReviewAskedAt,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    await _prefs.setInt(_kReviewAsks, reviewAsks + 1);
+  }
+
+  Future<void> markReviewSettled() => _prefs.setBool(_kReviewSettled, true);
+
+  /// Whether enough has changed since the last ask to justify another one.
+  ///
+  /// The caller still decides whether the *moment* is right; this only answers
+  /// whether asking at all would be reasonable.
+  bool get mayAskForReview {
+    if (reviewSettled || reviewAsks >= maxReviewAsks) return false;
+    final last = reviewAskedAt;
+    if (last == null) return true;
+    final since = DateTime.now().difference(last);
+    // A negative gap means the clock moved backwards. Treat it as "not yet"
+    // rather than as an invitation to ask on every result.
+    if (since.isNegative) return false;
+    return since >= reviewAskGap;
+  }
+
+  // ─── Wrapped ─────────────────────────────────────────────────────────────
+
+  /// The `yyyy-MM` of the most recent Wrapped the student has actually opened.
+  ///
+  /// Drives the "new" dot on the sidebar entry: a recap they have already seen
+  /// should not keep advertising itself for the rest of the month.
+  String? get wrappedSeen => _prefs.getString(_kWrappedSeen);
+
+  Future<void> setWrappedSeen(String month) =>
+      _prefs.setString(_kWrappedSeen, month);
 }

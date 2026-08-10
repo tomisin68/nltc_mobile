@@ -34,6 +34,8 @@ class PracticeController extends ChangeNotifier {
   /// downloads on a Nigerian mobile connection just make them all slow.
   String? _downloading;
   int _downloadedSoFar = 0;
+  int? _downloadTotal;
+  double? _downloadFraction;
   StreamSubscription<DownloadProgress>? _downloadSub;
 
   bool get isLoading => _loading;
@@ -41,6 +43,11 @@ class PracticeController extends ChangeNotifier {
   String get query => _query;
   String? get downloadingSubject => _downloading;
   int get downloadedSoFar => _downloadedSoFar;
+
+  /// How many the bank holds, when the server said. Null leaves the strip on an
+  /// indeterminate bar rather than an invented one.
+  int? get downloadTotal => _downloadTotal;
+  double? get downloadFraction => _downloadFraction;
 
   bool isDownloading(String subject) => _downloading == subject;
 
@@ -126,6 +133,8 @@ class PracticeController extends ChangeNotifier {
 
     _downloading = subject;
     _downloadedSoFar = 0;
+    _downloadTotal = null;
+    _downloadFraction = null;
     _error = null;
     notifyListeners();
 
@@ -133,6 +142,8 @@ class PracticeController extends ChangeNotifier {
     _downloadSub = _questions.downloadSubject(subject).listen(
       (progress) {
         _downloadedSoFar = progress.fetched;
+        _downloadTotal = progress.total;
+        _downloadFraction = progress.fraction;
         notifyListeners();
       },
       onError: (_) {

@@ -9,9 +9,27 @@ import 'learning_profile_repository.dart';
 /// Progress of a subject download, for the UI to show a real bar rather than
 /// an indeterminate spinner.
 class DownloadProgress {
-  const DownloadProgress({required this.fetched, required this.done});
+  const DownloadProgress({
+    required this.fetched,
+    required this.done,
+    this.total,
+  });
+
   final int fetched;
+
+  /// How many the subject's bank holds, or null when the server wouldn't say.
+  /// Counted before the download starts, so it is what to measure against — not
+  /// what will necessarily be saved, since a malformed question is skipped.
+  final int? total;
+
   final bool done;
+
+  /// How far along, or null when there is no total to be a fraction of.
+  double? get fraction {
+    final of = total ?? 0;
+    if (of <= 0) return null;
+    return (fetched / of).clamp(0.0, 1.0);
+  }
 }
 
 /// Supplies questions, from the device when possible and the network when not.
@@ -31,10 +49,6 @@ class QuestionRepository {
 
   final LocalDatabase _local;
   final FirebaseFirestore _db;
-
-  /// Ceiling on how many questions we pull per subject. The web app uses the
-  /// same number; it comfortably covers every current subject bank.
-  static const maxPackSize = 2000;
 
   /// Firestore caps an `IN` query at 30 values, and reads are billed per
   /// document, so packs are fetched in pages rather than one huge read.
@@ -68,40 +82,87 @@ class QuestionRepository {
 
   // ─── Download ────────────────────────────────────────────────────────────
 
-  /// Pulls a subject's whole bank onto the device.
+  /// Pulls a subject's whole bank onto the device — every question in it, not a
+  /// sample of it. A student who downloads Chemistry for a journey with no signal
+  /// gets the same bank the app would have drawn from online.
   ///
   /// Emits progress as it pages so the student can watch it fill on a slow
-  /// connection. The pack is only committed once every page has arrived, so an
-  /// interrupted download leaves the previous pack intact rather than a
-  /// half-written one that looks complete.
+  /// connection. Each page is written to disk as it lands, so the bank is never
+  /// held in memory all at once, and the pack is only committed once the last
+  /// page has arrived — an interrupted download leaves the previous pack intact
+  /// rather than a half-written one that looks complete.
   Stream<DownloadProgress> downloadSubject(String subject) async* {
-    final collected = <Question>[];
-    DocumentSnapshot<Map<String, dynamic>>? cursor;
+    await _local.beginSubjectPack();
 
-    while (collected.length < maxPackSize) {
-      var query = _db
-          .collection('questions')
-          .where('subject', isEqualTo: subject)
-          .limit(_pageSize);
-      if (cursor != null) query = query.startAfterDocument(cursor);
+    try {
+      // Asked for up front so the strip can show a real bar. A count aggregate
+      // is billed as one read per thousand documents, which is nothing next to
+      // the download itself, and the bar is worth far more now that a bank is
+      // no longer capped at a couple of thousand questions.
+      final total = await _bankSize(subject);
+      yield DownloadProgress(fetched: 0, total: total, done: false);
 
-      // Force a server read: a cache hit here would "download" nothing.
-      final snap = await query.get(const GetOptions(source: Source.server));
-      if (snap.docs.isEmpty) break;
+      var fetched = 0;
+      DocumentSnapshot<Map<String, dynamic>>? cursor;
 
-      for (final doc in snap.docs) {
-        final q = Question.fromMap(doc.id, doc.data());
-        if (q.isUsable) collected.add(q);
+      while (true) {
+        var query = _db
+            .collection('questions')
+            .where('subject', isEqualTo: subject)
+            .limit(_pageSize);
+        if (cursor != null) query = query.startAfterDocument(cursor);
+
+        // Force a server read: a cache hit here would "download" nothing.
+        final snap = await query.get(const GetOptions(source: Source.server));
+        if (snap.docs.isEmpty) break;
+
+        final page = <Question>[];
+        for (final doc in snap.docs) {
+          final q = Question.fromMap(doc.id, doc.data());
+          if (q.isUsable) page.add(q);
+        }
+        fetched = await _local.stageQuestions(page);
+
+        cursor = snap.docs.last;
+        yield DownloadProgress(fetched: fetched, total: total, done: false);
+
+        if (snap.docs.length < _pageSize) break;
       }
 
-      cursor = snap.docs.last;
-      yield DownloadProgress(fetched: collected.length, done: false);
+      if (fetched == 0) {
+        // The bank came back empty — usually a subject that was renamed on the
+        // server. Committing that would delete a pack the student already has
+        // and can still sit exams with, so leave it exactly where it is; the
+        // caller says "nothing published yet" and nobody loses anything.
+        await _local.discardStagedPack();
+        yield DownloadProgress(fetched: 0, total: total, done: true);
+        return;
+      }
 
-      if (snap.docs.length < _pageSize) break;
+      final saved = await _local.commitSubjectPack(subject);
+      yield DownloadProgress(fetched: saved, total: total, done: true);
+    } catch (_) {
+      // A pack that never finished downloading is not worth keeping around,
+      // and the student still has whatever they had before.
+      await _local.discardStagedPack();
+      rethrow;
     }
+  }
 
-    await _local.saveSubjectPack(subject, collected);
-    yield DownloadProgress(fetched: collected.length, done: true);
+  /// How many questions the subject's bank holds, or null if the count could not
+  /// be had. A missing total only costs the progress bar its percentage, so it
+  /// must never be the reason a download fails to start.
+  Future<int?> _bankSize(String subject) async {
+    try {
+      final snap = await _db
+          .collection('questions')
+          .where('subject', isEqualTo: subject)
+          .count()
+          .get();
+      return snap.count;
+    } catch (_) {
+      return null;
+    }
   }
 
   // ─── Drawing an exam ─────────────────────────────────────────────────────

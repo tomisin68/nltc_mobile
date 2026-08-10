@@ -1,21 +1,19 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../data/repositories/platform_review_repository.dart';
 import '../../core/state/session_controller.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/toast.dart';
 import '../../core/widgets/app_card.dart';
+import '../../core/widgets/star_rating.dart';
 
 /// The student's review of NLTC itself.
 ///
-/// One per student, and the document id IS their uid — which makes "one per
-/// student" a property of the data rather than a rule somebody has to check.
-/// Writes always land as `pending`: the collection is world-readable so the
-/// marketing site can show published reviews, and an unmoderated
-/// world-readable text field on a platform full of under-18s is a liability
-/// rather than a feature. The Firestore rules enforce that, not just this
-/// widget. Mirrors `PlatformReviewCard.jsx` on the web.
+/// The permanent home for a review — always here, always editable. The
+/// post-result prompt in `review_prompt.dart` is the other way in, and writes
+/// the same document through the same repository. Mirrors
+/// `PlatformReviewCard.jsx` on the web.
 class PlatformReviewCard extends StatefulWidget {
   const PlatformReviewCard({super.key});
 
@@ -33,11 +31,7 @@ class _PlatformReviewCardState extends State<PlatformReviewCard> {
   bool _editing = false;
   bool _saving = false;
 
-  DocumentReference<Map<String, dynamic>>? get _ref {
-    final uid = context.read<SessionController>().account?.uid;
-    if (uid == null) return null;
-    return FirebaseFirestore.instance.collection('platformReviews').doc(uid);
-  }
+  String? get _uid => context.read<SessionController>().account?.uid;
 
   @override
   void initState() {
@@ -52,50 +46,38 @@ class _PlatformReviewCardState extends State<PlatformReviewCard> {
   }
 
   Future<void> _load() async {
-    try {
-      final snap = await _ref?.get();
-      if (!mounted) return;
-      final data = snap?.data();
-      setState(() {
-        if (data != null) {
-          _rating = (data['rating'] as num?)?.toInt() ?? 0;
-          _body.text = (data['body'] as String?) ?? '';
-          _status = (data['status'] as String?) ?? 'pending';
-        }
-        _loading = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
-    }
+    final uid = _uid;
+    final existing = uid == null
+        ? null
+        : await context.read<PlatformReviewRepository>().mine(uid);
+    if (!mounted) return;
+    setState(() {
+      if (existing != null) {
+        _rating = existing.rating;
+        _body.text = existing.body;
+        _status = existing.status;
+      }
+      _loading = false;
+    });
   }
 
   Future<void> _save() async {
     if (_rating == 0 || _saving) return;
-    final ref = _ref;
-    if (ref == null) return;
+    final uid = _uid;
+    if (uid == null) return;
 
     final session = context.read<SessionController>();
-    final profile = session.profile;
-    final name = [
-      profile?.firstName,
-      profile?.lastName,
-    ].where((p) => p != null && p.trim().isNotEmpty).join(' ').trim();
+    final repository = context.read<PlatformReviewRepository>();
 
     setState(() => _saving = true);
     try {
-      await ref.set({
-        'uid': session.account?.uid,
-        'name': name.isEmpty ? 'Student' : name,
-        'photo': profile?.profileImage,
-        'targetExam': profile?.targetExam,
-        'rating': _rating,
-        'body': _body.text.trim(),
-        // An edit re-enters moderation, so a review cannot be published clean
-        // and then rewritten into something else.
-        'status': 'pending',
-        'updatedAt': FieldValue.serverTimestamp(),
-        if (_status == null) 'createdAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await repository.save(
+        uid: uid,
+        profile: session.profile,
+        rating: _rating,
+        body: _body.text,
+        isFirst: _status == null,
+      );
 
       if (!mounted) return;
       setState(() {
@@ -153,10 +135,10 @@ class _PlatformReviewCardState extends State<PlatformReviewCard> {
               ),
             ),
 
-          _Stars(
+          StarRating(
             rating: _rating,
-            interactive: showForm,
-            onRate: (n) => setState(() => _rating = n),
+            onRate:
+                showForm ? (n) => setState(() => _rating = n) : null,
           ),
           if (_rating > 0)
             Padding(
@@ -260,34 +242,3 @@ class _PlatformReviewCardState extends State<PlatformReviewCard> {
   }
 }
 
-class _Stars extends StatelessWidget {
-  const _Stars({
-    required this.rating,
-    required this.interactive,
-    required this.onRate,
-  });
-
-  final int rating;
-  final bool interactive;
-  final ValueChanged<int> onRate;
-
-  @override
-  Widget build(BuildContext context) => Row(
-        children: [
-          for (var n = 1; n <= 5; n++)
-            IconButton(
-              onPressed: interactive ? () => onRate(n) : null,
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
-              iconSize: 28,
-              tooltip: interactive ? '$n star${n > 1 ? 's' : ''}' : null,
-              icon: Icon(
-                n <= rating ? Icons.star_rounded : Icons.star_outline_rounded,
-                color: n <= rating
-                    ? BlueprintPalette.warning
-                    : Theme.of(context).colorScheme.outlineVariant,
-              ),
-            ),
-        ],
-      );
-}

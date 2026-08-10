@@ -120,6 +120,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
               _DownloadStrip(
                 subject: controller.downloadingSubject!,
                 fetched: controller.downloadedSoFar,
+                total: controller.downloadTotal,
+                fraction: controller.downloadFraction,
               ),
             Expanded(
               child: RefreshIndicator(
@@ -220,15 +222,31 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
 /// Live progress for the one download allowed at a time.
 class _DownloadStrip extends StatelessWidget {
-  const _DownloadStrip({required this.subject, required this.fetched});
+  const _DownloadStrip({
+    required this.subject,
+    required this.fetched,
+    this.total,
+    this.fraction,
+  });
 
   final String subject;
   final int fetched;
+
+  /// How many the whole bank holds, when the server said so.
+  final int? total;
+  final double? fraction;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
+
+    // A whole bank can run to thousands of questions on a slow connection, so
+    // the strip says how far along it is whenever it can — a count that only
+    // goes up gives no sense of how much longer there is to wait.
+    final label = total == null || total! <= 0
+        ? 'Downloading $subject — $fetched questions so far'
+        : 'Downloading $subject — $fetched of $total questions';
 
     return Container(
       width: double.infinity,
@@ -238,24 +256,44 @@ class _DownloadStrip extends StatelessWidget {
         color: scheme.primaryContainer,
         borderRadius: BorderRadius.circular(Tokens.rMd),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: scheme.onPrimaryContainer,
-            ),
+          Row(
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  value: fraction,
+                  color: scheme.onPrimaryContainer,
+                ),
+              ),
+              const SizedBox(width: Tokens.s4),
+              Expanded(
+                child: Text(
+                  label,
+                  style: text.bodyMedium
+                      ?.copyWith(color: scheme.onPrimaryContainer),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: Tokens.s4),
-          Expanded(
-            child: Text(
-              'Downloading $subject — $fetched questions so far',
-              style: text.bodyMedium
-                  ?.copyWith(color: scheme.onPrimaryContainer),
+          if (fraction != null) ...[
+            const SizedBox(height: Tokens.s3),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(Tokens.rSm),
+              child: LinearProgressIndicator(
+                value: fraction,
+                minHeight: 4,
+                backgroundColor: scheme.onPrimaryContainer.withValues(
+                  alpha: 0.15,
+                ),
+                color: scheme.onPrimaryContainer,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );

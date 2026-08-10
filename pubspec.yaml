@@ -76,9 +76,12 @@ dependencies:
   # is memory-only, so every cold start re-downloaded every face in the chat
   # list — on a slow connection that is a screen of empty circles.
   cached_network_image: ^3.4.1
-  sensors_plus: ^7.1.0
   package_info_plus: ^9.0.1
   device_info_plus: ^12.4.0
+  # The Wrapped recap and the blog both hand a card or a link to the system
+  # share sheet — WhatsApp is how a Nigerian student actually passes something
+  # on, and it is already in that sheet.
+  share_plus: ^12.0.0
 
 dev_dependencies:
   flutter_test:

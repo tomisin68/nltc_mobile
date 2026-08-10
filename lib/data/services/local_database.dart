@@ -23,7 +23,8 @@ class LocalDatabase {
   static const _fileName = 'nltc_offline.db';
 
   /// v2 added the two columns adaptive selection and diagram questions need.
-  static const _version = 2;
+  /// v3 added the staging table a download of any size writes through.
+  static const _version = 3;
 
   static Future<LocalDatabase> open() async {
     if (_instance != null) return _instance!;
@@ -53,7 +54,35 @@ class LocalDatabase {
       await db.execute('ALTER TABLE questions ADD COLUMN image_url TEXT');
       await db.execute('ALTER TABLE questions ADD COLUMN elo_rating REAL');
     }
+    if (oldVersion < 3) {
+      await db.execute(_stagingTable);
+    }
   }
+
+  /// Where a download lands while it is still arriving.
+  ///
+  /// A pack has to be committed all at once — a half-written one that looks
+  /// complete is worse than no pack at all — but a whole bank is too much to
+  /// hold in memory on a cheap phone while it downloads. Pages are written here
+  /// as they arrive and swapped into `questions` in a single transaction at the
+  /// end, which buys both. No indexes: nothing ever queries this table, it is
+  /// only filled, copied out, and emptied.
+  static const _stagingTable = '''
+    CREATE TABLE IF NOT EXISTS questions_staging (
+      id          TEXT PRIMARY KEY,
+      subject     TEXT NOT NULL,
+      text        TEXT NOT NULL,
+      options     TEXT NOT NULL,
+      answer_key  TEXT NOT NULL,
+      topic       TEXT,
+      year        INTEGER,
+      explanation TEXT,
+      exam_type   TEXT,
+      difficulty  TEXT,
+      image_url   TEXT,
+      elo_rating  REAL
+    )
+  ''';
 
   static Future<void> _createSchema(Database db, int version) async {
     await db.execute('''
@@ -124,35 +153,84 @@ class LocalDatabase {
     await db.execute(
       'CREATE INDEX idx_notifications_created ON notifications (created_at DESC)',
     );
+
+    await db.execute(_stagingTable);
   }
 
   // ─── Question banks ──────────────────────────────────────────────────────
 
-  /// Replaces a subject's bank in one transaction, so an interrupted download
-  /// can never leave a half-written pack that looks complete.
-  Future<void> saveSubjectPack(String subject, List<Question> questions) async {
-    await _db.transaction((txn) async {
-      await txn.delete('questions', where: 'subject = ?', whereArgs: [subject]);
+  /// Starts a download, throwing away anything a previous one left behind.
+  ///
+  /// Staging is deliberately not per-subject: only one download runs at a time,
+  /// and a leftover half-pack from a download that was killed mid-flight has no
+  /// value to anyone.
+  Future<void> beginSubjectPack() => _db.delete('questions_staging');
 
-      final batch = txn.batch();
+  /// Writes one page of a download to disk. Returns the running total, counted
+  /// in the table rather than by the caller so a question that arrives twice
+  /// across two pages is not counted twice.
+  Future<int> stageQuestions(List<Question> questions) async {
+    if (questions.isNotEmpty) {
+      final batch = _db.batch();
       for (final q in questions) {
         batch.insert(
-          'questions',
+          'questions_staging',
           q.toRow(),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
-      batch.insert(
+      await batch.commit(noResult: true);
+    }
+    return stagedCount();
+  }
+
+  /// How many questions the download in flight has written so far.
+  Future<int> stagedCount() async {
+    final rows = await _db.rawQuery(
+      'SELECT COUNT(*) AS c FROM questions_staging',
+    );
+    return (rows.first['c'] as num?)?.toInt() ?? 0;
+  }
+
+  /// Swaps a finished download into place, replacing the subject's previous bank
+  /// in one transaction — so an interrupted download can never leave a
+  /// half-written pack that looks complete. Returns how many were committed.
+  Future<int> commitSubjectPack(String subject) async {
+    final count = await stagedCount();
+    await _db.transaction((txn) async {
+      await txn.delete('questions', where: 'subject = ?', whereArgs: [subject]);
+      await txn.execute(
+        'INSERT OR REPLACE INTO questions '
+        '(id, subject, text, options, answer_key, topic, year, explanation, '
+        ' exam_type, difficulty, image_url, elo_rating) '
+        'SELECT id, ?, text, options, answer_key, topic, year, explanation, '
+        '       exam_type, difficulty, image_url, elo_rating '
+        'FROM questions_staging',
+        [subject],
+      );
+      await txn.delete('questions_staging');
+      await txn.insert(
         'subject_packs',
         {
           'subject': subject,
-          'question_count': questions.length,
+          'question_count': count,
           'downloaded_at': DateTime.now().millisecondsSinceEpoch,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      await batch.commit(noResult: true);
     });
+    return count;
+  }
+
+  /// Drops a download that failed part-way. The previous pack, if there was one,
+  /// is untouched and still usable.
+  Future<void> discardStagedPack() async {
+    try {
+      await _db.delete('questions_staging');
+    } catch (_) {
+      // Nothing to clean up, or the database is already closed. Either way the
+      // next download clears the table before it starts.
+    }
   }
 
   Future<void> deleteSubjectPack(String subject) async {
@@ -196,17 +274,22 @@ class LocalDatabase {
     return rows.map(Question.fromRow).where((q) => q.isUsable).toList();
   }
 
-  /// The whole candidate pool for a sitting, unordered.
+  /// The candidate pool for a sitting.
   ///
-  /// Distinct from [drawQuestions], which lets SQLite pick at random. The draw
-  /// has to see every candidate before it can hold back the ones this student
-  /// has already been served, so filtering happens here and the shuffle happens
-  /// in Dart.
+  /// Distinct from [drawQuestions], which asks SQLite for the finished exam. The
+  /// draw has to see the candidates before it can hold back the ones this
+  /// student has already been served, so filtering happens here and the choosing
+  /// happens in Dart.
+  ///
+  /// [limit] only bounds how much of a bank is held in memory at once; a subject
+  /// with more questions than that is sampled at random rather than cut off at
+  /// the first N rows, because SQLite's natural order is insertion order — a
+  /// plain limit would mean the questions uploaded last were never once served.
   Future<List<Question>> questionPool({
     required String subject,
     List<String> topics = const [],
     String? examType,
-    int limit = 3000,
+    int limit = 6000,
   }) async {
     final clauses = <String>['subject = ?'];
     final args = <Object?>[subject];
@@ -226,6 +309,7 @@ class LocalDatabase {
       'questions',
       where: clauses.join(' AND '),
       whereArgs: args,
+      orderBy: 'RANDOM()',
       limit: limit,
     );
     return rows.map(Question.fromRow).where((q) => q.isUsable).toList();
