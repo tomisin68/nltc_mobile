@@ -16,6 +16,7 @@ import '../core/widgets/empty_state.dart';
 import '../core/widgets/page_header.dart';
 import '../core/widgets/skeleton.dart';
 import 'conversation_screen.dart';
+import 'message_requests_screen.dart';
 import 'widgets/contact_search_list.dart';
 
 /// Messages — the conversation list.
@@ -207,7 +208,24 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final uid = context.read<SessionController>().account?.uid ?? '';
-    final chats = _chats;
+    final all = _chats;
+
+    // Requests are held out of the list until they're accepted, and a declined
+    // one is held out of both — for the person who declined because that is
+    // what declining means, and for the sender because leaving it visible
+    // would tell them they'd been turned down, which is not information this
+    // app owes anyone.
+    final requests = [
+      for (final chat in all ?? const <Chat>[])
+        if (chat.isPendingFor(uid)) chat,
+    ];
+    final chats = all == null
+        ? null
+        : [
+            for (final chat in all)
+              if (!chat.isPendingFor(uid) && !chat.isDeclined) chat,
+          ];
+
     final query = _search.trim().toLowerCase();
     final visible = chats == null
         ? null
@@ -252,6 +270,17 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           const SizedBox(height: Tokens.s4),
+          if (requests.isNotEmpty) ...[
+            _RequestsBanner(
+              count: requests.length,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => MessageRequestsScreen(requests: requests),
+                ),
+              ),
+            ),
+            const SizedBox(height: Tokens.s3),
+          ],
           if (visible == null)
             const Column(
               children: [
@@ -288,6 +317,76 @@ class _ChatScreenState extends State<ChatScreen> {
         onPressed: _openComposeMenu,
         tooltip: 'New conversation',
         child: const Icon(Icons.edit_rounded),
+      ),
+    );
+  }
+}
+
+/// The way into the requests tray.
+///
+/// Deliberately a count and nothing else — no name, no message preview. A
+/// student should be able to see that someone is asking without the asking
+/// itself landing on their screen.
+class _RequestsBanner extends StatelessWidget {
+  const _RequestsBanner({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Material(
+      color: scheme.primaryContainer.withValues(alpha: 0.45),
+      borderRadius: BorderRadius.circular(Tokens.rMd),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(Tokens.rMd),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: Tokens.s4,
+            vertical: Tokens.s3,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.mark_email_unread_rounded,
+                size: 20,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: Tokens.s3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Message requests',
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      count == 1
+                          ? '1 student you have not spoken to'
+                          : '$count students you have not spoken to',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: scheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

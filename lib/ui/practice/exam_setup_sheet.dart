@@ -77,8 +77,8 @@ class ExamSetupSheet extends StatefulWidget {
   /// is recorded; null falls back to the student choosing a board.
   final CbtExam? exam;
 
-  /// True for Topic mode, which lets several topics be picked at once and offers
-  /// the exam-type and difficulty filters the website's topic picker has.
+  /// True for Topic mode, which lets several topics be picked at once and
+  /// offers the exam-type filter the website's topic picker has.
   final bool topicMode;
 
   /// Which collection to draw from — the junior bank for BECE.
@@ -117,11 +117,9 @@ class _ExamSetupSheetState extends State<ExamSetupSheet> {
   bool _customTimer = false;
 
   String? _examTypeFilter;
-  String? _difficultyFilter;
 
   List<String> _availableTopics = const [];
   List<String> _availableExamTypes = const [];
-  List<String> _availableDifficulties = const [];
 
   bool _starting = false;
   String? _error;
@@ -150,21 +148,17 @@ class _ExamSetupSheetState extends State<ExamSetupSheet> {
     );
     if (!mounted) return;
 
-    // The filters only make sense against a downloaded bank — reading distinct
+    // The filter only makes sense against a downloaded bank — reading distinct
     // values over the network would cost the whole subject to populate a
     // dropdown.
     final examTypes = widget.subject.isDownloaded
         ? await local.distinctValues(widget.subject.name, 'exam_type')
-        : const <String>[];
-    final difficulties = widget.subject.isDownloaded
-        ? await local.distinctValues(widget.subject.name, 'difficulty')
         : const <String>[];
     if (!mounted) return;
 
     setState(() {
       _availableTopics = topics;
       _availableExamTypes = examTypes;
-      _availableDifficulties = difficulties;
 
       // Realign a pre-selected topic with the bank's own spelling. Note topics
       // and bank topics are typed in two different admin screens, so their
@@ -255,17 +249,15 @@ class _ExamSetupSheetState extends State<ExamSetupSheet> {
 
     List<Question> questions;
     try {
-      // The student's ability estimate. Without it the draw is a blind shuffle
-      // that serves the same questions as last time and teaches the engine
-      // nothing — see `QuestionRepository.drawExam`.
+      // The profile carries the seen-question map, which is what keeps a random
+      // draw from serving the same questions the student answered yesterday —
+      // see `QuestionRepository.drawExam`.
       final profile = await learning.load(session.account?.uid);
       questions = await repository.drawExam(
         subject: config.subject,
-        subjectKey: widget.subjectKey,
         count: config.questionCount,
         topics: topics,
         examType: _examTypeFilter,
-        difficulty: _difficultyFilter,
         bank: widget.bank,
         profile: profile,
       );
@@ -410,17 +402,9 @@ class _ExamSetupSheetState extends State<ExamSetupSheet> {
                 ),
                 const SizedBox(height: Tokens.s5),
               ],
-              if (widget.topicMode && _availableDifficulties.isNotEmpty) ...[
-                const _Label('Difficulty'),
-                _ChipRow<String?>(
-                  values: [null, ..._availableDifficulties],
-                  selected: _difficultyFilter,
-                  labelOf: (v) => v ?? 'All',
-                  onSelected: (v) => setState(() => _difficultyFilter = v),
-                ),
-                const SizedBox(height: Tokens.s5),
-              ],
-
+              // No difficulty chips. The Easy/Medium/Hard labels came in
+              // inconsistently across uploads, so filtering on one handed the
+              // student a paper that did not match what the chip promised.
               const _Label('Questions'),
               _ChipRow<int>(
                 values: _availableCounts,

@@ -10,6 +10,37 @@ enum ChatType {
       raw == 'group' ? ChatType.group : ChatType.dm;
 }
 
+/// Whether the person on the receiving end of a new DM has let it through.
+///
+/// A student can be messaged by anyone else on the platform, which is fine
+/// until it isn't — the point of a request is that an unwanted first message
+/// arrives in a tray the student chooses to open, not in the conversation list
+/// beside their study group, and that declining costs one tap and no
+/// explanation.
+///
+/// Groups never carry one: you are put in a group by somebody, and leaving is
+/// the control that matters there.
+enum ChatRequestStatus {
+  /// Waiting on [Chat.requestFor]. Only they can move it.
+  pending,
+
+  /// Either accepted, or a conversation that predates requests entirely —
+  /// which is why this, not [pending], is what a missing field means.
+  accepted,
+
+  /// Turned down. Stays on the document rather than being deleted so the
+  /// sender cannot simply open a fresh one and try again.
+  declined;
+
+  static ChatRequestStatus parse(String? raw) => switch (raw) {
+        'pending' => ChatRequestStatus.pending,
+        'declined' => ChatRequestStatus.declined,
+        _ => ChatRequestStatus.accepted,
+      };
+
+  String get wire => name;
+}
+
 /// How far a message this student sent has got.
 ///
 /// Four states rather than the web's two, because "it left my phone" and "it
@@ -55,6 +86,9 @@ class Chat {
     this.typing = const {},
     this.readBy = const {},
     this.deliveredTo = const {},
+    this.requestStatus = ChatRequestStatus.accepted,
+    this.requestedBy,
+    this.requestFor,
   });
 
   final String id;
@@ -112,7 +146,35 @@ class Chat {
   /// That is what separates the grey double tick from the single one.
   final Map<String, int> deliveredTo;
 
+  /// Where this DM stands with the person who was messaged.
+  final ChatRequestStatus requestStatus;
+
+  /// Who opened the conversation. Their side is never held up.
+  final String? requestedBy;
+
+  /// Who has to accept. The only member allowed to change [requestStatus] —
+  /// the Firestore rules enforce that, not just this app.
+  final String? requestFor;
+
   bool get isGroup => type == ChatType.group;
+
+  /// True when [uid] is the one being asked, and hasn't answered yet.
+  ///
+  /// This is what keeps the conversation out of the main list and in the
+  /// requests tray.
+  bool isPendingFor(String? uid) =>
+      requestStatus == ChatRequestStatus.pending &&
+      uid != null &&
+      requestFor == uid;
+
+  /// True when [uid] sent the request and is still waiting.
+  bool isAwaitingReplyFrom(String? uid) =>
+      requestStatus == ChatRequestStatus.pending &&
+      uid != null &&
+      requestFor != uid;
+
+  /// True when nobody should be able to type into this conversation any more.
+  bool get isDeclined => requestStatus == ChatRequestStatus.declined;
 
   int unreadFor(String? uid) => uid == null ? 0 : (unreadCount[uid] ?? 0);
 
@@ -283,6 +345,12 @@ class Chat {
       typing: typing,
       readBy: readBy,
       deliveredTo: deliveredTo,
+      // A chat written before requests existed has none of these three, and
+      // `parse` reads a missing status as accepted — so old conversations
+      // stay exactly where they were rather than all landing in the tray.
+      requestStatus: ChatRequestStatus.parse(_str(m['requestStatus'])),
+      requestedBy: _str(m['requestedBy']),
+      requestFor: _str(m['requestFor']),
     );
   }
 }

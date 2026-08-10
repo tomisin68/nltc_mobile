@@ -22,6 +22,7 @@ import '../quicktests/quick_tests_screen.dart';
 import '../quiz/official_quiz_screen.dart';
 import '../profile/profile_screen.dart';
 import '../settings/settings_screen.dart';
+import '../support/shake_to_report.dart';
 import '../support/support_fab.dart';
 import 'access_banners.dart';
 import 'dashboard_sidebar.dart';
@@ -98,39 +99,45 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final viewIsFree = _freeViews.contains(view);
     final locked = access.isLocked && !viewIsFree;
 
-    return Scaffold(
-      drawer: const DashboardSidebar(),
-      appBar: DashboardTopbar(title: view.title),
-      // Deliberately outside the `locked` branch below: a student who cannot
-      // get in is the one with the most urgent reason to reach somebody.
-      //
-      // Messages is the one exception. It builds its own Scaffold with a "new
-      // conversation" button in the same corner, so support yields it there and
-      // stays reachable from the sidebar instead — which costs nothing, because
-      // Messages is not a free view and a locked account cannot open it anyway.
-      floatingActionButton:
-          view == DashboardView.chat ? null : const SupportFab(),
-      body: SafeArea(
-        top: false,
-        child: locked
-            ? LockedView(access: access)
-            : Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(
-                      left: Tokens.s4,
-                      right: Tokens.s4,
-                      top: Tokens.s3,
+    // Wraps the whole shell, not a screen: the moment worth reporting is the
+    // moment something looked wrong, and that is never the page with the
+    // feedback button on it.
+    return ShakeToReport(
+      child: Scaffold(
+        drawer: const DashboardSidebar(),
+        appBar: DashboardTopbar(title: view.title),
+        // Deliberately outside the `locked` branch below: a student who cannot
+        // get in is the one with the most urgent reason to reach somebody.
+        //
+        // Messages is the one exception. It builds its own Scaffold with a "new
+        // conversation" button in the same corner, so support yields it there and
+        // stays reachable from the sidebar instead — which costs nothing, because
+        // Messages is not a free view and a locked account cannot open it anyway.
+        floatingActionButton: view == DashboardView.chat
+            ? null
+            : const SupportFab(),
+        body: SafeArea(
+          top: false,
+          child: locked
+              ? LockedView(access: access)
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        left: Tokens.s4,
+                        right: Tokens.s4,
+                        top: Tokens.s3,
+                      ),
+                      child: AccessBanners(
+                        access: access,
+                        view: view,
+                        viewIsFree: viewIsFree,
+                      ),
                     ),
-                    child: AccessBanners(
-                      access: access,
-                      view: view,
-                      viewIsFree: viewIsFree,
-                    ),
-                  ),
-                  Expanded(child: _view(view)),
-                ],
-              ),
+                    Expanded(child: _view(view)),
+                  ],
+                ),
+        ),
       ),
     );
   }
@@ -150,11 +157,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       DashboardView.profile => ProfileScreen(key: key),
       // JSS students get the junior track here, the way the web routes `cbt` to
       // BECEPracticeView for them.
-      DashboardView.cbt => DashboardSidebar.isJuniorStudent(
-            context.read<SessionController>().profile,
-          )
-          ? BecePracticeScreen(key: key)
-          : CbtPracticeScreen(key: key),
+      DashboardView.cbt =>
+        DashboardSidebar.isJuniorStudent(
+              context.read<SessionController>().profile,
+            )
+            ? BecePracticeScreen(key: key)
+            : CbtPracticeScreen(key: key),
       DashboardView.bece => BecePracticeScreen(key: key),
       DashboardView.officialQuiz => OfficialQuizScreen(key: key),
       DashboardView.lessons => LessonsScreen(key: key),

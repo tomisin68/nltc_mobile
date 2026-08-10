@@ -180,14 +180,6 @@ class LearningProfileRepository {
 
   static String cacheKeyFor(String uid) => 'mlprofile_$uid';
 
-  /// Seed ratings for questions the engine has not rated yet, taken from the
-  /// admin's difficulty label. Same numbers as `DIFFICULTY_SEED_RATING` on the web.
-  static const _difficultySeed = <String, double>{
-    'easy': 1000,
-    'medium': 1200,
-    'hard': 1400,
-  };
-
   Future<LearningProfile> load(String? uid) async {
     if (uid == null || uid.isEmpty) return const LearningProfile();
 
@@ -215,48 +207,36 @@ class LearningProfileRepository {
     );
   }
 
-  /// Orders [pool] by how well each question fits this student right now.
+  /// Draws [count] questions at random from [pool].
   ///
-  /// Unseen questions come first, so the bank isn't repeated until it's
-  /// exhausted; within a freshness tier the question whose Elo rating sits
-  /// closest to the student's ability wins, which is the "productive struggle"
-  /// target adaptive testing aims for. Ties break on how long ago the question
-  /// was last served, then randomly so two identical sittings still differ.
+  /// Questions this student has never seen are drawn first, so the bank is
+  /// exhausted before anything repeats — but inside a freshness tier the order
+  /// is pure chance. Two students sitting the same mode get different papers,
+  /// and so does the same student on a second attempt.
   ///
-  /// A direct port of `rankByFit` in `src/pages/CBTPage.jsx`.
-  static List<Question> rankByFit(
+  /// This replaced an Elo "closest to your measured ability" ranking whose
+  /// seed ratings came from the admin's Easy/Medium/Hard label. Those labels
+  /// were applied inconsistently across uploads, so the ordering was noise
+  /// wearing the costume of adaptivity, and being otherwise deterministic it
+  /// served the same questions in the same order every sitting. Mirrors
+  /// `drawPaper` in the website's `src/pages/CBTPage.jsx`.
+  static List<Question> drawPaper(
     List<Question> pool,
-    double theta,
     Map<String, SeenQuestion> seen,
+    int count,
   ) {
-    final ranked = [...pool];
-    final jitter = <String, double>{
-      for (final q in pool) q.id: _random.nextDouble(),
-    };
+    final byFreshness = <int, List<Question>>{};
+    for (final q in pool) {
+      final seenCount = (seen[q.id] ?? SeenQuestion.unseen).seenCount;
+      byFreshness.putIfAbsent(seenCount, () => []).add(q);
+    }
 
-    ranked.sort((a, b) {
-      final seenA = seen[a.id] ?? SeenQuestion.unseen;
-      final seenB = seen[b.id] ?? SeenQuestion.unseen;
-
-      final byFreshness = seenA.seenCount.compareTo(seenB.seenCount);
-      if (byFreshness != 0) return byFreshness;
-
-      final byFit = _gap(a, theta).compareTo(_gap(b, theta));
-      if (byFit != 0) return byFit;
-
-      final byAge = seenA.lastSeenAt.compareTo(seenB.lastSeenAt);
-      if (byAge != 0) return byAge;
-
-      return (jitter[a.id] ?? 0).compareTo(jitter[b.id] ?? 0);
-    });
-    return ranked;
-  }
-
-  static double _gap(Question q, double theta) {
-    final rating = q.eloRating ??
-        _difficultySeed[(q.difficulty ?? '').toLowerCase()] ??
-        LearningProfile.neutralTheta;
-    return (rating - theta).abs();
+    final picked = <Question>[];
+    for (final seenCount in byFreshness.keys.toList()..sort()) {
+      if (picked.length >= count) break;
+      picked.addAll(byFreshness[seenCount]!..shuffle(_random));
+    }
+    return picked.take(count).toList();
   }
 
   static final _random = Random();

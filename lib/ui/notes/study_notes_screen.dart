@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/repositories/study_note_repository.dart';
@@ -16,6 +15,7 @@ import '../core/widgets/page_header.dart';
 import '../core/widgets/skeleton.dart';
 import '../core/widgets/subject_grid.dart';
 import '../practice/exam_setup_sheet.dart';
+import 'widgets/note_html.dart';
 import '../shell/dashboard_sidebar.dart' show DashboardSidebar;
 
 /// Study notes: subject grid → topic list → note reader.
@@ -320,24 +320,10 @@ class _NoteReader extends StatelessWidget {
         PageHeader(title: topic.topic, subtitle: subject.name),
         AppCard(
           child: topic.hasNote
-              // The admin's rich-text editor emits HTML. Only the safe subset is
-              // rendered: no scripts, no iframes, no remote CSS — the renderer
-              // supports inline formatting, lists, tables and images, which is
-              // everything the editor can produce.
-              ? HtmlWidget(
-                  topic.note!.content,
-                  textStyle: TextStyle(
-                    fontSize: 14.5,
-                    height: 1.7,
-                    color: scheme.onSurface,
-                  ),
-                  // Anything not on the allowlist is dropped rather than rendered.
-                  customWidgetBuilder: (element) =>
-                      const {'script', 'iframe', 'object', 'embed', 'form'}
-                              .contains(element.localName)
-                          ? const SizedBox.shrink()
-                          : null,
-                )
+              // The admin writes raw HTML, so a note carries the teacher's own
+              // colours, highlights, tables and diagrams. NoteHtml renders that
+              // faithfully and safely — see its doc comment.
+              ? NoteHtml(html: topic.note!.content)
               : const EmptyState(
                   icon: Icons.hourglass_empty_rounded,
                   title: 'Notes coming soon',

@@ -17,7 +17,7 @@ import '../core/toast.dart';
 /// Kept in step with `SUPPORT_CONTACT` in `src/utils/support.js` — these are the
 /// live numbers, not placeholders, so they are worth checking against the
 /// website before either copy is edited.
-const _supportEmail = 'nextleveltutorial@gmail.com';
+const _supportEmail = 'nextleveltutorialcollege@gmail.com';
 const _supportPhones = <({String display, String tel})>[
   (display: '0701 708 0467', tel: '+2347017080467'),
   (display: '0805 326 8648', tel: '+2348053268648'),

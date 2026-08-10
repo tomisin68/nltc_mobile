@@ -198,14 +198,14 @@ class LocalDatabase {
 
   /// The whole candidate pool for a sitting, unordered.
   ///
-  /// Distinct from [drawQuestions], which lets SQLite pick at random. Adaptive
-  /// selection has to see every candidate before it can rank them by fit, so the
-  /// filtering happens here and the ordering happens in Dart.
+  /// Distinct from [drawQuestions], which lets SQLite pick at random. The draw
+  /// has to see every candidate before it can hold back the ones this student
+  /// has already been served, so filtering happens here and the shuffle happens
+  /// in Dart.
   Future<List<Question>> questionPool({
     required String subject,
     List<String> topics = const [],
     String? examType,
-    String? difficulty,
     int limit = 3000,
   }) async {
     final clauses = <String>['subject = ?'];
@@ -221,10 +221,6 @@ class LocalDatabase {
       clauses.add('LOWER(exam_type) = ?');
       args.add(examType.toLowerCase());
     }
-    if (difficulty != null && difficulty.isNotEmpty) {
-      clauses.add('LOWER(difficulty) = ?');
-      args.add(difficulty.toLowerCase());
-    }
 
     final rows = await _db.query(
       'questions',
@@ -235,10 +231,11 @@ class LocalDatabase {
     return rows.map(Question.fromRow).where((q) => q.isUsable).toList();
   }
 
-  /// Distinct exam types and difficulty labels present in a downloaded bank —
-  /// what the topic-mode filters offer.
+  /// Distinct exam types present in a downloaded bank — what the topic-mode
+  /// filter offers. `difficulty` is stored but deliberately not filterable:
+  /// the labels were never applied consistently enough to mean anything.
   Future<List<String>> distinctValues(String subject, String column) async {
-    if (!const {'exam_type', 'difficulty'}.contains(column)) {
+    if (!const {'exam_type'}.contains(column)) {
       throw ArgumentError.value(column, 'column', 'not a filterable column');
     }
     final rows = await _db.rawQuery(

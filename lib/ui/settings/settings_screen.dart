@@ -12,10 +12,12 @@ import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
 import '../core/widgets/app_card.dart';
 import '../core/widgets/empty_state.dart';
+import '../core/widgets/in_app_browser.dart';
 import '../core/widgets/page_header.dart';
 import '../core/widgets/skeleton.dart';
 import '../profile/widgets/profile_form_fields.dart';
 import 'widgets/bank_transfer_sheet.dart';
+import 'widgets/platform_review_card.dart';
 
 /// Settings.
 ///
@@ -516,6 +518,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: Tokens.s4),
 
         _PaymentHistoryCard(payments: _payments),
+        const SizedBox(height: Tokens.s4),
+
+        const PlatformReviewCard(),
+        const SizedBox(height: Tokens.s4),
+
+        const _LegalCard(),
         const SizedBox(height: Tokens.s4),
 
         // App-only: the website has no theme switch because it has no dark mode.
@@ -1238,6 +1246,55 @@ class _PaymentHistoryCard extends StatelessWidget {
 }
 
 /// The theme switch. App-only — the website has no dark mode to match.
+/// The agreement the student is actually operating under.
+///
+/// The app had no route to it at all, which mattered once messaging began
+/// carrying a consent term: reporting a conversation sends the whole thread to
+/// our staff, and the terms are where that is written down. Burying the only
+/// copy on a website the student may never open is not consent worth relying
+/// on. Opened in the in-app browser so nobody loses their place in the app.
+class _LegalCard extends StatelessWidget {
+  const _LegalCard();
+
+  static const _documents = <({String label, IconData icon, String path})>[
+    (
+      label: 'Terms & Conditions',
+      icon: Icons.gavel_rounded,
+      path: 'https://nltc.com.ng/terms-and-conditions.html',
+    ),
+    (
+      label: 'Privacy Policy',
+      icon: Icons.lock_outline_rounded,
+      path: 'https://nltc.com.ng/privacy-policy.html',
+    ),
+    (
+      label: 'Refund Policy',
+      icon: Icons.receipt_long_rounded,
+      path: 'https://nltc.com.ng/refund-policy.html',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) => AppCard(
+        title: 'Legal',
+        titleIcon: Icons.description_outlined,
+        child: Column(
+          children: [
+            for (final doc in _documents)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                leading: Icon(doc.icon, size: 20),
+                title: Text(doc.label, style: const TextStyle(fontSize: 13.5)),
+                trailing: const Icon(Icons.open_in_new_rounded, size: 17),
+                onTap: () =>
+                    openInAppBrowser(context, doc.path, title: doc.label),
+              ),
+          ],
+        ),
+      );
+}
+
 class _AppearanceCard extends StatelessWidget {
   const _AppearanceCard();
 

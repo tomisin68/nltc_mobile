@@ -428,9 +428,52 @@ class ChatRepository {
       'createdBy': myUid,
       'lastActivity': FieldValue.serverTimestamp(),
       'unreadCount': <String, int>{},
+      // A first approach is a request, not a conversation. It sits in the
+      // other student's requests tray until they let it through — see
+      // [ChatRequestStatus]. Mirrors the website's `startDM`.
+      'requestStatus': ChatRequestStatus.pending.wire,
+      'requestedBy': myUid,
+      'requestFor': contact.uid,
     });
     return ref.id;
   }
+
+  /// Lets a pending conversation through.
+  ///
+  /// Only the student the request was addressed to may call this — the rules
+  /// reject it from anyone else, so a sender cannot accept on their own behalf.
+  Future<void> acceptRequest(String chatId) => _chat(chatId).update({
+        'requestStatus': ChatRequestStatus.accepted.wire,
+        'requestRespondedAt': FieldValue.serverTimestamp(),
+      });
+
+  /// Reports a conversation to the admins, history and all.
+  ///
+  /// The snapshot is taken server-side rather than posted from here, for two
+  /// reasons this app cannot work around: it can only read messages the rules
+  /// let it read, and either party can soft-delete a message the moment they
+  /// realise a report has been filed. `POST /api/reports/chat` reads past both
+  /// with the Admin SDK and freezes the result somewhere neither member of the
+  /// chat can reach.
+  Future<void> reportChat({
+    required String chatId,
+    required String reason,
+    String details = '',
+  }) =>
+      _api.post('/reports/chat', {
+        'chatId': chatId,
+        'reason': reason,
+        if (details.isNotEmpty) 'details': details,
+      });
+
+  /// Turns a pending conversation down.
+  ///
+  /// The document stays, holding the decline: deleting it would let the sender
+  /// open a fresh request and arrive in the tray again the same afternoon.
+  Future<void> declineRequest(String chatId) => _chat(chatId).update({
+        'requestStatus': ChatRequestStatus.declined.wire,
+        'requestRespondedAt': FieldValue.serverTimestamp(),
+      });
 
   /// Creates a group with [contacts] in it, and posts the opening notice.
   Future<String> createGroup({

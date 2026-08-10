@@ -108,12 +108,10 @@ class QuestionRepository {
 
   /// Picks the questions for one subject's worth of a sitting.
   ///
-  /// Selection is adaptive when a [profile] is supplied, and that is the point:
-  /// a blind shuffle serves the same questions a student answered yesterday and
-  /// tells the engine nothing. With a profile, unseen questions come first and
-  /// then the ones pitched closest to this student's measured ability — the same
-  /// `rankByFit` order the website uses, so the two never repeat each other's
-  /// questions.
+  /// The draw is random every time. Supplying a [profile] does not make it
+  /// adaptive — it only tells the draw which questions this student has already
+  /// been served, so those are held back until the fresh ones run out. Matches
+  /// `drawPaper` on the website, so the two surfaces don't repeat each other.
   ///
   /// Prefers the downloaded pack: it is instant and works with no signal. Falls
   /// back to Firestore only when the subject hasn't been downloaded, and that
@@ -124,10 +122,8 @@ class QuestionRepository {
     String? topic,
     List<String> topics = const [],
     String? examType,
-    String? difficulty,
     String bank = seniorBank,
     LearningProfile? profile,
-    String? subjectKey,
   }) async {
     final wantedTopics = <String>{
       if (topic != null && topic.isNotEmpty) topic,
@@ -143,10 +139,9 @@ class QuestionRepository {
           subject: subject,
           topics: wantedTopics,
           examType: examType,
-          difficulty: difficulty,
         );
         if (pool.isNotEmpty) {
-          return _select(pool, count, profile, subjectKey ?? subject);
+          return _select(pool, count, profile);
         }
       }
     }
@@ -156,10 +151,8 @@ class QuestionRepository {
       count: count,
       topics: wantedTopics,
       examType: examType,
-      difficulty: difficulty,
       bank: bank,
       profile: profile,
-      subjectKey: subjectKey ?? subject,
     );
   }
 
@@ -180,7 +173,6 @@ class QuestionRepository {
     for (final request in requests) {
       final drawn = await drawExam(
         subject: request.name,
-        subjectKey: request.key,
         count: request.count,
         topics: request.topics,
         bank: bank,
@@ -202,22 +194,23 @@ class QuestionRepository {
     return DrawnPaper(questions: questions, sections: sections);
   }
 
-  /// Ranks a candidate pool and takes the top [count].
+  /// Draws [count] questions at random from a candidate pool.
   List<Question> _select(
     List<Question> pool,
     int count,
     LearningProfile? profile,
-    String subjectKey,
   ) {
     if (profile == null) {
       final shuffled = [...pool]..shuffle();
       return shuffled.take(count).toList();
     }
-    return LearningProfileRepository.rankByFit(
+    // With a profile the draw is still random — the profile only says which
+    // questions this student has already been served, so those go last.
+    return LearningProfileRepository.drawPaper(
       pool,
-      profile.thetaFor(subjectKey),
       profile.seenQuestions,
-    ).take(count).toList();
+      count,
+    );
   }
 
   Future<List<Question>> _drawFromNetwork({
@@ -225,9 +218,7 @@ class QuestionRepository {
     required int count,
     required List<String> topics,
     required String bank,
-    required String subjectKey,
     String? examType,
-    String? difficulty,
     LearningProfile? profile,
   }) async {
     // A single topic filters server-side; several are filtered here, because
@@ -238,7 +229,7 @@ class QuestionRepository {
       query = query.where('topic', isEqualTo: topics.first);
     }
 
-    // Over-fetch: ranking needs a pool to choose from, and Firestore has no
+    // Over-fetch: the draw needs a pool to choose from, and Firestore has no
     // random ordering, so taking the first N every time would serve the same
     // exam repeatedly. The ceiling matches the web's own `limit(500)`.
     final wanted = topics.length > 1 ? _networkPoolCeiling : count * 8;
@@ -263,14 +254,7 @@ class QuestionRepository {
           .where((q) => (q.examType ?? '').toLowerCase() == wantedType)
           .toList();
     }
-    if (difficulty != null && difficulty.isNotEmpty) {
-      final wantedLevel = difficulty.toLowerCase();
-      pool = pool
-          .where((q) => (q.difficulty ?? '').toLowerCase() == wantedLevel)
-          .toList();
-    }
-
-    return _select(pool, count, profile, subjectKey);
+    return _select(pool, count, profile);
   }
 
   /// The senior question bank. The junior syllabus lives in its own collection

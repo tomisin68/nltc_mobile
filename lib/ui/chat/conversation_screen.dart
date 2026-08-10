@@ -14,6 +14,7 @@ import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
 import 'chat_screen.dart' show ChatAvatar;
 import 'group_settings_screen.dart';
+import 'report_chat_sheet.dart';
 import 'user_profile_sheet.dart';
 import 'widgets/chat_composer.dart';
 import 'widgets/message_bubble.dart';
@@ -356,6 +357,20 @@ class _ConversationScreenState extends State<ConversationScreen> {
     unawaited(context.read<ChatRepository>().setTyping(widget.chatId, uid, false));
   }
 
+  /// Hands the conversation to the admins for investigation.
+  ///
+  /// Nothing about the chat changes here — reporting is not blocking, and
+  /// pretending otherwise would leave a student thinking they were safe when
+  /// they were only heard.
+  void _reportChat(Chat? chat) {
+    if (chat == null) return;
+    showReportChatSheet(
+      context,
+      chatId: widget.chatId,
+      chatTitle: chat.titleFor(_myUid),
+    );
+  }
+
   Future<void> _send() async {
     final text = _composer.text.trim();
     final chat = _chat;
@@ -691,7 +706,20 @@ class _ConversationScreenState extends State<ConversationScreen> {
     final chat = _chat;
     final visible = _visible;
     final typists = chat?.typistsOtherThan(uid) ?? const [];
-    final canPost = chat?.canPost(uid) ?? true;
+
+    // A declined request is a closed door: the composer goes with it, so the
+    // sender cannot keep talking into a conversation nobody will read. A
+    // request still waiting stays open — the whole point of the first message
+    // is that it gives the other student something to decide on.
+    final declined = chat?.isDeclined ?? false;
+    final canPost = (chat?.canPost(uid) ?? true) && !declined;
+    final awaitingReply = chat?.isAwaitingReplyFrom(uid) ?? false;
+
+    final composerNote = declined
+        ? 'This conversation is closed.'
+        : canPost
+            ? null
+            : 'Only group admins can post in this group.';
 
     final presenceController = context.watch<PresenceController>();
     _presence = presenceController;
@@ -847,11 +875,37 @@ class _ConversationScreenState extends State<ConversationScreen> {
                       icon: const Icon(Icons.info_outline_rounded),
                       tooltip: 'Group info',
                     ),
+                  PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'report') _reportChat(chat);
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: 'report',
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.flag_outlined, size: 20),
+                          title: Text('Report this conversation'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
         body: SafeArea(
           child: Column(
             children: [
+              // The sender's side of a request. Says plainly that the other
+              // student hasn't opened it yet, so silence isn't read as a
+              // snub — and so nobody wonders why there's no reply.
+              if (awaitingReply)
+                _RequestNotice(
+                  icon: Icons.schedule_rounded,
+                  text: 'Waiting for '
+                      '${chat?.titleFor(uid).split(' ').first ?? 'them'} to '
+                      'accept your message request. They will see it in their '
+                      'requests tray.',
+                ),
               Expanded(
                 child: visible.isEmpty
                     ? Center(
@@ -965,13 +1019,50 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   onChanged: _onTyping,
                   onSend: _send,
                   onAttach: _sendAttachment,
-                  lockedNote: canPost
-                      ? null
-                      : 'Only group admins can post in this group.',
+                  lockedNote: composerNote,
                 ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A quiet strip across the top of a conversation explaining its state.
+class _RequestNotice extends StatelessWidget {
+  const _RequestNotice({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: Tokens.s4,
+        vertical: Tokens.s3,
+      ),
+      color: scheme.primaryContainer.withValues(alpha: 0.4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 17, color: scheme.primary),
+          const SizedBox(width: Tokens.s3),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.5,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
