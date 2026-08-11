@@ -96,6 +96,7 @@ class AppUser {
     this.weeklyGoal = 5,
     this.weeklyXp = 0,
     this.weekStart,
+    this.referralCount = 0,
     this.achievements = const [],
     this.dailyMission,
     this.createdAt,
@@ -166,6 +167,13 @@ class AppUser {
 
   /// `yyyy-MM-dd` of the UTC Monday [weeklyXp] belongs to.
   final String? weekStart;
+
+  /// How many accounts have been created through this student's invite link.
+  ///
+  /// Written only by the backend, once per referred signup, alongside the XP it
+  /// pays out — so `referralCount * kReferralXp` is what the invite card can
+  /// honestly claim the link has earned.
+  final int referralCount;
 
   /// IDs of badges the backend has awarded outright.
   final List<String> achievements;
@@ -347,6 +355,7 @@ class AppUser {
         weeklyGoal: weeklyGoal ?? this.weeklyGoal,
         weeklyXp: weeklyXp,
         weekStart: weekStart,
+        referralCount: referralCount,
         achievements: achievements,
         dailyMission: dailyMission ?? this.dailyMission,
         createdAt: createdAt,
@@ -401,6 +410,7 @@ class AppUser {
         weeklyGoal: m['weeklyGoal'] is num ? _int(m['weeklyGoal']) : 5,
         weeklyXp: _int(m['weeklyXp']),
         weekStart: _str(m['weekStart']),
+        referralCount: _int(m['referralCount']),
         achievements: m['achievements'] is List
             ? (m['achievements'] as List).whereType<String>().toList()
             : const [],
@@ -452,6 +462,7 @@ class AppUser {
         'weeklyGoal': weeklyGoal,
         'weeklyXp': weeklyXp,
         'weekStart': weekStart,
+        'referralCount': referralCount,
         'achievements': achievements,
         'dailyMission': dailyMission?.toJson(),
         'createdAt': createdAt,

@@ -11,6 +11,9 @@ import '../core/theme/app_palette.dart';
 /// — a card that reflowed on a small screen would be shared looking different
 /// from the one the student was shown. 4:5 is the portrait crop that survives
 /// WhatsApp, Instagram and X without any of them cutting the numbers off.
+///
+/// Callers must give it the size it asks for and scale the result, rather than
+/// handing it a narrower box: see `_CardPanel` in `wrapped_screen.dart`.
 class WrappedCard extends StatelessWidget {
   const WrappedCard({
     super.key,
@@ -30,6 +33,17 @@ class WrappedCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final top = stats.topSubject;
 
+    // The card's height is fixed but its type was not, so a student with the
+    // system font size turned up grew the column past the bottom edge and the
+    // shared PNG came out with its last line sliced in half. Nothing in here is
+    // body copy the OS setting needs to reach — it is a picture, and it has to
+    // measure the same on every phone or the capture cannot be trusted.
+    return MediaQuery.withNoTextScaling(
+      child: _build(top),
+    );
+  }
+
+  Widget _build(SubjectTally? top) {
     return Container(
       width: width,
       height: height,
@@ -256,11 +270,17 @@ class _Stat extends StatelessWidget {
                 alignment: Alignment.centerLeft,
                 child: Text(
                   value,
-                  style: GoogleFonts.syne(
-                    fontSize: 19,
+                  // Syne's numerals are a display shape — at 19px, scaled down
+                  // to a chat thumbnail, its 8 and 0 stopped being separable.
+                  // DM Sans is what the rest of the app counts in.
+                  style: GoogleFonts.dmSans(
+                    fontSize: 20,
                     height: 1.1,
                     fontWeight: FontWeight.w800,
                     color: BlueprintPalette.white,
+                    // Tabular, so the three boxes in a row line up as a grid
+                    // rather than as three unrelated numbers.
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
               ),

@@ -1,6 +1,14 @@
 /// Where an invite sends somebody.
 const kSignupUrl = 'https://nltc.com.ng/auth?mode=signup';
 
+/// What a referrer earns when somebody signs up through their link.
+///
+/// Display only. `REFERRAL_XP` in the backend's `services/referralService.js` is
+/// what actually pays out, and it pays the referrer's own document directly —
+/// the app has no way to award itself XP, and shouldn't. Keep the two in step:
+/// this is the number a student is promised on the invite card.
+const kReferralXp = 200;
+
 /// The student's personal invite link.
 ///
 /// The uid rides along as `ref` so signups can be traced back to whoever's card
@@ -38,6 +46,14 @@ String withReferral(String url, String? uid) {
     queryParameters: {...uri.queryParameters, 'ref': id},
   ).toString();
 }
+
+/// The message for a bare invite, with no Wrapped card behind it.
+///
+/// Says what the student gets rather than what NLTC is, because this one is
+/// forwarded cold — there is no screenshot alongside it doing the explaining.
+String shareInviteMessage(String? uid) =>
+    'I am prepping for JAMB, WAEC and NECO on NLTC — past questions, mock '
+    'exams and live classes, all in one place. Join me: ${inviteLink(uid)}';
 
 /// The message that travels with a shared Wrapped card.
 ///

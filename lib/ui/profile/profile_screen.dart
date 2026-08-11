@@ -2,13 +2,16 @@ import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../data/repositories/profile_repository.dart';
 import '../../domain/models/app_user.dart';
+import '../../domain/referral.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
@@ -235,6 +238,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: Tokens.s4),
 
           _AccountStatusCard(profile: profile),
+          const SizedBox(height: Tokens.s4),
+
+          _InviteCard(
+            uid: session.account?.uid,
+            count: profile?.referralCount ?? 0,
+          ),
           const SizedBox(height: Tokens.s4),
 
           AppCard(
@@ -529,6 +538,133 @@ class _StudentRecordCard extends StatelessWidget {
               style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// The student's invite link, and what it has earned them so far.
+///
+/// The link is the website's signup page tagged with this uid. The backend
+/// resolves that tag when the new account calls `/users/on-signup`, writes
+/// `referredBy` on it, and credits [kReferralXp] here — once per account, so
+/// [count] only moves on a signup that actually completed. Nothing on this card
+/// awards anything; it reports a number the server owns.
+class _InviteCard extends StatelessWidget {
+  const _InviteCard({required this.uid, required this.count});
+
+  /// Null before the session has an account, in which case the link falls back
+  /// to the untagged signup page — still shareable, just uncredited.
+  final String? uid;
+
+  final int count;
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: inviteLink(uid)));
+    showToast('Invite link copied.');
+  }
+
+  Future<void> _share() => SharePlus.instance.share(
+        ShareParams(
+          text: shareInviteMessage(uid),
+          subject: 'Come and study on NLTC',
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return AppCard(
+      title: 'Invite Friends',
+      titleIcon: Icons.card_giftcard_rounded,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Share your link. Every friend who creates an account with it '
+            'earns you $kReferralXp XP.',
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.5,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: Tokens.s3),
+          Container(
+            padding: const EdgeInsets.fromLTRB(Tokens.s3, 2, 4, 2),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(Tokens.rSm),
+              border: Border.all(color: scheme.outlineVariant),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    inviteLink(uid),
+                    // One line, ellipsised: the link is long and nobody types
+                    // it out — the copy and share buttons are how it travels.
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _copy,
+                  icon: const Icon(Icons.copy_rounded, size: 16),
+                  color: scheme.primary,
+                  tooltip: 'Copy invite link',
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: Tokens.s3),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _share,
+              icon: const Icon(Icons.ios_share_rounded, size: 17),
+              label: const Text('Share my invite link'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+              ),
+            ),
+          ),
+          const SizedBox(height: Tokens.s3),
+          Row(
+            children: [
+              Icon(
+                count == 0 ? Icons.group_add_rounded : Icons.groups_rounded,
+                size: 15,
+                color: count == 0
+                    ? scheme.onSurfaceVariant
+                    : BlueprintPalette.warning,
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  count == 0
+                      ? 'Nobody has joined with your link yet.'
+                      : '${count == 1 ? '1 friend has' : '$count friends have'} '
+                          'joined — ${count * kReferralXp} XP earned.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: count == 0 ? FontWeight.w500 : FontWeight.w700,
+                    color: count == 0
+                        ? scheme.onSurfaceVariant
+                        : scheme.onSurface,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

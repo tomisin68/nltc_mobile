@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -10,6 +12,7 @@ import '../../domain/referral.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
+import 'wrapped_audio.dart';
 import 'wrapped_card.dart';
 import 'wrapped_share.dart';
 
@@ -31,9 +34,20 @@ class WrappedScreen extends StatefulWidget {
   State<WrappedScreen> createState() => _WrappedScreenState();
 }
 
+/// The reveal clock for the subject bars: the first lands after [_barDelay] and
+/// each one after it [_barGap] later.
+///
+/// Named because the bar animation and the ticks that accompany it both work
+/// from these — retiming one without the other is how sound drifts out of step
+/// with the picture it belongs to.
+const _barDelay = Duration(milliseconds: 90);
+const _barGap = Duration(milliseconds: 70);
+
 class _WrappedScreenState extends State<WrappedScreen> {
   final _controller = PageController();
   final _cardKey = GlobalKey();
+
+  late final WrappedAudio _audio;
 
   WrappedReport? _report;
   DateTime? _month;
@@ -44,13 +58,53 @@ class _WrappedScreenState extends State<WrappedScreen> {
   @override
   void initState() {
     super.initState();
+    // Started loading now rather than on the first cue: the opening bloom is
+    // supposed to land with the first panel, and five players cannot be spun up
+    // in the gap between the stats arriving and the panel being drawn.
+    _audio = WrappedAudio(enabled: context.read<PrefsService>().wrappedSoundOn);
+    unawaited(_audio.load());
     _load();
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    unawaited(_audio.dispose());
     super.dispose();
+  }
+
+  /// The cue that belongs to [page].
+  ///
+  /// Driven off `onPageChanged` rather than off each panel's build, for the
+  /// same reason `_Reveal` is: a PageView builds its neighbour before the
+  /// student can see it, and a cue fired then plays to nobody.
+  void _cueFor(int page, WrappedStats stats) {
+    switch (page) {
+      case 0:
+        _audio.play(WrappedCue.open);
+      case 1:
+        _audio.play(WrappedCue.count);
+      case 2:
+        // One per bar, on the bars' own clock — see `_SubjectsPanel`.
+        _audio.playTicks(
+          count: stats.subjects.take(5).length,
+          first: _barDelay,
+          gap: _barGap,
+        );
+      case 3:
+        _audio.play(WrappedCue.chime);
+      case 4:
+        _audio.play(WrappedCue.finish);
+    }
+  }
+
+  Future<void> _toggleSound() async {
+    final on = !_audio.enabled;
+    setState(() => _audio.enabled = on);
+    // A tick on the way back up, so turning it on proves it works rather than
+    // leaving the student to swipe a panel to find out.
+    if (on) _audio.play(WrappedCue.tick);
+    await context.read<PrefsService>().setWrappedSoundOn(on);
   }
 
   Future<void> _load() async {
@@ -83,6 +137,10 @@ class _WrappedScreenState extends State<WrappedScreen> {
       _month = month;
       _loading = false;
     });
+
+    // Panel 0 is on screen the moment the spinner goes; `onPageChanged` never
+    // fires for the page a PageView starts on, so its cue is played by hand.
+    _audio.play(WrappedCue.open);
 
     // Clears the sidebar's "new recap" dot. Recorded against the last finished
     // month rather than whichever month is on screen, because that dot only
@@ -119,6 +177,7 @@ class _WrappedScreenState extends State<WrappedScreen> {
     if (next < 0 || next >= months.length) return;
 
     HapticFeedback.selectionClick();
+    _audio.play(WrappedCue.tick);
     setState(() => _month = months[next]);
     _controller.jumpToPage(0);
     setState(() => _page = 0);
@@ -187,6 +246,8 @@ class _WrappedScreenState extends State<WrappedScreen> {
                       _Progress(count: _panelCount, active: _page),
                       _MonthBar(
                         label: stats.monthLabel,
+                        soundOn: _audio.enabled,
+                        onToggleSound: _toggleSound,
                         onPrevious: () => _stepMonth(1),
                         onNext: () => _stepMonth(-1),
                         onClose: () => Navigator.of(context).pop(),
@@ -204,7 +265,10 @@ class _WrappedScreenState extends State<WrappedScreen> {
                           },
                           child: PageView(
                             controller: _controller,
-                            onPageChanged: (i) => setState(() => _page = i),
+                            onPageChanged: (i) {
+                              setState(() => _page = i);
+                              _cueFor(i, stats);
+                            },
                             children: [
                               _OpeningPanel(stats: stats, active: _page == 0),
                               _VolumePanel(stats: stats, active: _page == 1),
@@ -269,31 +333,60 @@ class _Progress extends StatelessWidget {
 class _MonthBar extends StatelessWidget {
   const _MonthBar({
     required this.label,
+    required this.soundOn,
+    required this.onToggleSound,
     required this.onPrevious,
     required this.onNext,
     required this.onClose,
   });
 
   final String label;
+  final bool soundOn;
+  final VoidCallback onToggleSound;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback onClose;
+
+  /// Four buttons and a month label do not fit across a small phone at the
+  /// stock 48px tap target, and the label is the thing that would give — so the
+  /// buttons are tightened to 38px instead of letting "September 2026" clip.
+  static Widget _button({
+    required VoidCallback onPressed,
+    required IconData icon,
+    required String tooltip,
+  }) =>
+      IconButton(
+        onPressed: onPressed,
+        icon: Icon(icon),
+        iconSize: 21,
+        color: BlueprintPalette.b300,
+        tooltip: tooltip,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+        visualDensity: VisualDensity.compact,
+      );
 
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.fromLTRB(Tokens.s2, Tokens.s2, Tokens.s2, 0),
         child: Row(
           children: [
-            IconButton(
+            _button(
+              onPressed: onToggleSound,
+              icon: soundOn ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+              tooltip: soundOn ? 'Turn sound off' : 'Turn sound on',
+            ),
+            _button(
               onPressed: onPrevious,
-              icon: const Icon(Icons.chevron_left_rounded),
-              color: BlueprintPalette.b300,
+              icon: Icons.chevron_left_rounded,
               tooltip: 'Earlier month',
             ),
             Expanded(
               child: Text(
                 label,
                 textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.syne(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -302,16 +395,14 @@ class _MonthBar extends StatelessWidget {
                 ),
               ),
             ),
-            IconButton(
+            _button(
               onPressed: onNext,
-              icon: const Icon(Icons.chevron_right_rounded),
-              color: BlueprintPalette.b300,
+              icon: Icons.chevron_right_rounded,
               tooltip: 'Later month',
             ),
-            IconButton(
+            _button(
               onPressed: onClose,
-              icon: const Icon(Icons.close_rounded),
-              color: BlueprintPalette.b300,
+              icon: Icons.close_rounded,
               tooltip: 'Close',
             ),
           ],
@@ -567,11 +658,15 @@ class _VolumePanel extends StatelessWidget {
             delay: const Duration(milliseconds: 90),
             child: Text(
               '${stats.questions}',
-              style: GoogleFonts.syne(
+              // The headline number of the whole recap, so it is set in the
+              // font the app counts in rather than in Syne, whose numerals are
+              // drawn for a logotype and read as one at this size.
+              style: GoogleFonts.dmSans(
                 fontSize: 76,
                 height: 1,
                 fontWeight: FontWeight.w800,
                 color: BlueprintPalette.white,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -626,7 +721,7 @@ class _SubjectsPanel extends StatelessWidget {
           for (var i = 0; i < top.length; i++)
             _Reveal(
               active: active,
-              delay: Duration(milliseconds: 90 + i * 70),
+              delay: _barDelay + _barGap * i,
               child: Padding(
                 padding: const EdgeInsets.only(bottom: Tokens.s3),
                 child: _SubjectBar(
@@ -663,7 +758,7 @@ class _SubjectBar extends StatelessWidget {
                 width: 18,
                 child: Text(
                   '$rank',
-                  style: GoogleFonts.syne(
+                  style: GoogleFonts.dmSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
                     color: BlueprintPalette.b300,
@@ -684,10 +779,13 @@ class _SubjectBar extends StatelessWidget {
               ),
               Text(
                 '${tally.questions}',
-                style: const TextStyle(
+                style: GoogleFonts.dmSans(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
                   color: BlueprintPalette.b200,
+                  // Tabular, so the counts stack into a column down the right
+                  // edge instead of drifting with each subject's digit widths.
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],
@@ -798,14 +896,33 @@ class _CardPanel extends StatelessWidget {
         ),
         child: Column(
           children: [
-            // The boundary is exactly the card and nothing else, so the PNG has
-            // no page background bleeding into its edges.
-            RepaintBoundary(
-              key: cardKey,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(Tokens.rLg),
-                child: WrappedCard(stats: stats, name: name),
-              ),
+            // Scaled to fit rather than laid out into whatever width is going.
+            // A narrow phone used to hand the card 300-odd pixels, which it
+            // took — reflowing the type, ellipsing the stat captions, and
+            // shipping a PNG that was not the 4:5 crop the card is designed as.
+            // FittedBox measures the child unconstrained, so the boundary is
+            // always exactly WrappedCard.width × .height and the capture is
+            // identical on every device; only the on-screen preview shrinks.
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final scale =
+                    (constraints.maxWidth / WrappedCard.width).clamp(0.0, 1.0);
+                return SizedBox(
+                  width: WrappedCard.width * scale,
+                  height: WrappedCard.height * scale,
+                  child: FittedBox(
+                    // The boundary is exactly the card and nothing else, so the
+                    // PNG has no page background bleeding into its edges.
+                    child: RepaintBoundary(
+                      key: cardKey,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(Tokens.rLg),
+                        child: WrappedCard(stats: stats, name: name),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: Tokens.s5),
             SizedBox(

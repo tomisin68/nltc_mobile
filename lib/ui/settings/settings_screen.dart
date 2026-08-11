@@ -6,6 +6,7 @@ import '../../data/repositories/billing_repository.dart';
 import '../../data/repositories/profile_repository.dart';
 import '../../domain/models/access_state.dart';
 import '../../domain/models/app_user.dart';
+import '../../domain/plans.dart';
 import '../core/state/session_controller.dart';
 import '../core/state/theme_controller.dart';
 import '../core/theme/app_palette.dart';
@@ -218,6 +219,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
+    // Which package, before anything is priced. Dismissing the picker is a
+    // decision not to pay, so it stops here rather than falling through to a
+    // default length the student never chose.
+    String? planId;
+    if (!lessonFee) {
+      planId = await _pickPackage();
+      if (!mounted || planId == null) return;
+    }
+
     if (lessonFee && chosen != null) {
       // Remembered on the profile so an admin sees the right fee against this
       // student even if they end up paying cash at the centre.
@@ -232,7 +242,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final submitted = await showBankTransferSheet(
       context,
       type: lessonFee ? 'lesson_fee' : 'plan_upgrade',
-      plan: lessonFee ? null : 'pro',
+      plan: planId,
       classItem: lessonFee ? chosen : null,
     );
     if (!mounted || !submitted) return;
@@ -244,6 +254,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     final payments = await context.read<BillingRepository>().payments(uid);
     if (mounted) setState(() => _payments = payments);
+  }
+
+  /// Asks which Pro package to buy. Null when the student backs out.
+  Future<String?> _pickPackage() {
+    final profile = context.read<SessionController>().profile;
+    final expiry = profile?.planExpiresAt == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(profile!.planExpiresAt!);
+    final daysLeft = expiry == null
+        ? 0
+        : expiry.difference(DateTime.now()).inDays.clamp(0, 9999);
+
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => _PackagePicker(
+        fees: _fees,
+        // Renewing stacks on top of the days that are left — the backend adds
+        // the grant to the remaining window — so the picker can say so rather
+        // than leave a student wondering whether paying early costs them.
+        daysLeft: (profile?.plan ?? 'free') != 'free' ? daysLeft : 0,
+      ),
+    );
   }
 
   /// Re-reads whether a receipt is still with an admin.
@@ -339,10 +373,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final isJunior = profile?.isJunior ?? false;
     final isPhysical = _studentMode == 'physical';
 
-    // Physical students always bill through a class. Online students do too once
-    // an admin publishes an online fee for their level; until then they keep the
-    // plan-upgrade flow so nothing breaks before the fee is set up.
-    final useClassBilling = isPhysical || _myClasses.isNotEmpty;
+    // Centre students bill through a class: their money buys a seat in a room,
+    // and only their centre can price that. Online students buy a Pro package —
+    // monthly through to yearly — which is the one flow that offers a term or a
+    // session up front. The backend enforces the same split, so an online fee an
+    // admin publishes by mistake can no longer quietly become the online
+    // student's only option.
+    final useClassBilling = isPhysical;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(Tokens.s4, 0, Tokens.s4, Tokens.s10),
@@ -948,6 +985,212 @@ class _ClassSelector extends StatelessWidget {
   }
 }
 
+/// The four lengths of Pro, priced from the backend's fee settings.
+///
+/// One plan, four packages — every one of them unlocks exactly the same thing.
+/// The only variable is how long is paid for, so the cards lead with the length
+/// and the saving rather than repeating an identical feature list four times.
+class _PackagePicker extends StatefulWidget {
+  const _PackagePicker({required this.fees, required this.daysLeft});
+
+  final Fees fees;
+
+  /// Days still on the current plan, or 0. Renewals stack on top of these.
+  final int daysLeft;
+
+  @override
+  State<_PackagePicker> createState() => _PackagePickerState();
+}
+
+class _PackagePickerState extends State<_PackagePicker> {
+  String _selected = kDefaultProPlanId;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final money = NumberFormat.decimalPattern();
+    final fees = widget.fees;
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          Tokens.s4,
+          0,
+          Tokens.s4,
+          Tokens.s4,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.daysLeft > 0 ? 'Renew your Pro plan' : 'Choose your Pro package',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: Tokens.s2),
+            Text(
+              'Every package unlocks the same thing — all premium video lessons, '
+              'live classes, the full question bank and priority support. The '
+              'only difference is how long you pay for.',
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.5,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: Tokens.s4),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    for (final plan in kProPlans) ...[
+                      _PackageTile(
+                        plan: plan,
+                        price: fees.priceOf(plan),
+                        monthlyRate: fees.monthlyRateOf(plan),
+                        savingPercent: fees.savingPercentOf(plan),
+                        selected: _selected == plan.id,
+                        onTap: () => setState(() => _selected = plan.id),
+                      ),
+                      const SizedBox(height: Tokens.s2),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            if (widget.daysLeft > 0) ...[
+              const SizedBox(height: Tokens.s2),
+              _Notice(
+                icon: Icons.add_circle_outline_rounded,
+                tone: BlueprintPalette.success,
+                message: 'You have ${widget.daysLeft} '
+                    'day${widget.daysLeft == 1 ? '' : 's'} left. Renewing adds '
+                    'to that — you lose nothing by paying early.',
+              ),
+            ],
+            const SizedBox(height: Tokens.s4),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).pop(_selected),
+              icon: const Icon(Icons.account_balance_rounded, size: 18),
+              label: Text(
+                'Continue — ₦${money.format(fees.priceOf(resolveProPlan(_selected)))}',
+              ),
+            ),
+            const SizedBox(height: Tokens.s2),
+            Text(
+              'Bank transfer · activated in $kConfirmationWindow · '
+              'payments are final',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PackageTile extends StatelessWidget {
+  const _PackageTile({
+    required this.plan,
+    required this.price,
+    required this.monthlyRate,
+    required this.savingPercent,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ProPlan plan;
+  final int price;
+  final int monthlyRate;
+  final int savingPercent;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final money = NumberFormat.decimalPattern();
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(Tokens.rSm),
+      child: Container(
+        padding: const EdgeInsets.all(Tokens.s3),
+        decoration: BoxDecoration(
+          color: selected
+              ? BlueprintPalette.b500.withValues(alpha: 0.07)
+              : scheme.surface,
+          border: Border.all(
+            color: selected ? BlueprintPalette.b500 : scheme.outlineVariant,
+            width: selected ? 1.6 : 1,
+          ),
+          borderRadius: BorderRadius.circular(Tokens.rSm),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked_rounded
+                  : Icons.radio_button_unchecked_rounded,
+              size: 20,
+              color: selected ? BlueprintPalette.b500 : scheme.outline,
+            ),
+            const SizedBox(width: Tokens.s3),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        plan.label,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (savingPercent > 0) ...[
+                        const SizedBox(width: Tokens.s2),
+                        AppBadge(
+                          label: 'Save $savingPercent%',
+                          tone: BadgeTone.success,
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    plan.months == 1
+                        ? '${plan.days} days access'
+                        : '₦${money.format(monthlyRate)}/month · '
+                            '${plan.days} days access',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              '₦${money.format(price)}',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                // The web's gold reads as brand blue in the Blueprint remap.
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? BlueprintPalette.b300
+                    : BlueprintPalette.b600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SubscriptionCard extends StatelessWidget {
   const _SubscriptionCard({
     required this.profile,
@@ -1039,7 +1282,9 @@ class _SubscriptionCard extends StatelessWidget {
             label: Text(
               isPro
                   ? 'Renew Plan'
-                  : 'Upgrade to Pro — ₦${money.format(fees.proMonthly)}/mo',
+                  // The cheapest way in, so the button is never quoting a price
+                  // above the one the picker opens on.
+                  : 'Go Pro — from ₦${money.format(fees.priceOf(resolveProPlan(kDefaultProPlanId)))}/mo',
             ),
           ),
           const SizedBox(height: Tokens.s3),

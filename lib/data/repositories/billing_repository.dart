@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import '../../domain/models/app_user.dart' show tsToMs;
+import '../../domain/plans.dart';
 import '../services/api_client.dart';
 import '../services/firestore_cache.dart';
 
@@ -186,20 +187,54 @@ class PaymentRecord {
 }
 
 /// The platform's current prices.
+///
+/// Every Pro package has its own price here, keyed by the same settings field
+/// the backend reads. An admin can move any of them without an app release.
 class Fees {
-  const Fees({this.proMonthly = 2000, this.lessonFeeDefault = 5000});
+  const Fees({this.packagePrices = const {}, this.lessonFeeDefault = 5000});
 
-  final int proMonthly;
+  /// `settings/fees` field → naira, for the fields that are Pro packages.
+  final Map<String, int> packagePrices;
+
   final int lessonFeeDefault;
 
-  factory Fees.fromJson(Map<String, dynamic> json) => Fees(
-        proMonthly: json['proMonthly'] is num
-            ? (json['proMonthly'] as num).toInt()
-            : 2000,
-        lessonFeeDefault: json['lessonFeeDefault'] is num
-            ? (json['lessonFeeDefault'] as num).toInt()
-            : 5000,
-      );
+  /// Today's price for a package, falling back to the catalogue's figure.
+  ///
+  /// The fallback is what shows while the fees request is in flight, and on a
+  /// cold backend it is what the student pays — so it has to be the real
+  /// current price, not a placeholder.
+  int priceOf(ProPlan plan) {
+    final stored = packagePrices[plan.feeKey];
+    return stored != null && stored > 0 ? stored : plan.defaultPrice;
+  }
+
+  /// What one month works out at on this package.
+  int monthlyRateOf(ProPlan plan) => (priceOf(plan) / plan.months).round();
+
+  /// Percent saved against paying monthly for the same stretch, or 0.
+  ///
+  /// Rounded down, so the claim survives a student doing the multiplication.
+  int savingPercentOf(ProPlan plan) {
+    if (plan.months <= 1) return 0;
+    final full = priceOf(resolveProPlan(kDefaultProPlanId)) * plan.months;
+    final price = priceOf(plan);
+    if (full <= price) return 0;
+    return ((full - price) / full * 100).floor();
+  }
+
+  factory Fees.fromJson(Map<String, dynamic> json) {
+    final prices = <String, int>{};
+    for (final plan in kProPlans) {
+      final raw = json[plan.feeKey];
+      if (raw is num && raw > 0) prices[plan.feeKey] = raw.toInt();
+    }
+    return Fees(
+      packagePrices: prices,
+      lessonFeeDefault: json['lessonFeeDefault'] is num
+          ? (json['lessonFeeDefault'] as num).toInt()
+          : 5000,
+    );
+  }
 }
 
 /// The account students transfer their fees to.

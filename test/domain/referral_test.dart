@@ -59,6 +59,18 @@ void main() {
     });
   });
 
+  group('shareInviteMessage', () {
+    test('carries the tagged link', () {
+      expect(shareInviteMessage('u1'), contains('ref=u1'));
+    });
+
+    test('is still shareable before the session has a uid', () {
+      final message = shareInviteMessage(null);
+      expect(message, contains(kSignupUrl));
+      expect(message, isNot(contains('ref=')));
+    });
+  });
+
   group('inviteMessage', () {
     test('leads with the student, and carries the link', () {
       final message = inviteMessage(

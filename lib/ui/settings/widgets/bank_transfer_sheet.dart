@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../../data/repositories/billing_repository.dart';
 import '../../../data/services/api_client.dart' show ApiException;
+import '../../../domain/plans.dart';
 import '../../core/state/session_controller.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/toast.dart';
@@ -336,7 +337,13 @@ class _BankTransferSheetState extends State<BankTransferSheet> {
                 ),
               const SizedBox(height: Tokens.s1),
               Text(
-                '$label · 30 days access',
+                // A centre lesson fee is always a month; a Pro package is
+                // whatever length was picked. Telling a student who has just
+                // been quoted ₦30,000 that it buys "30 days access" is the
+                // fastest route to a support message.
+                '$label · '
+                '${widget.plan == null ? 30 : resolveProPlan(widget.plan).days}'
+                ' days access',
                 style: const TextStyle(fontSize: 12.5, color: Color(0xFF92400E)),
               ),
               if (_quoteError != null) ...[

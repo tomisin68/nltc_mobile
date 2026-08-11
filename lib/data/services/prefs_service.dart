@@ -30,6 +30,7 @@ class PrefsService {
   static const _kReviewAsks = 'nltc.reviewAsks';
   static const _kReviewSettled = 'nltc.reviewSettled';
   static const _kWrappedSeen = 'nltc.wrappedSeen';
+  static const _kWrappedSound = 'nltc.wrappedSound';
 
   // ─── Theme ───────────────────────────────────────────────────────────────
 
@@ -203,4 +204,15 @@ class PrefsService {
 
   Future<void> setWrappedSeen(String month) =>
       _prefs.setString(_kWrappedSeen, month);
+
+  /// Whether the Wrapped story plays its cues.
+  ///
+  /// On by default: the sound is part of the reveal, and a student who opens a
+  /// recap has chosen to sit through a thing rather than stumbled into it. The
+  /// screen's own toggle writes here, so turning it off once is remembered —
+  /// including for next month's recap.
+  bool get wrappedSoundOn => _prefs.getBool(_kWrappedSound) ?? true;
+
+  Future<void> setWrappedSoundOn(bool on) =>
+      _prefs.setBool(_kWrappedSound, on);
 }
