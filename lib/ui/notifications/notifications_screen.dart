@@ -3,11 +3,14 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../domain/models/app_notification.dart';
+import '../../domain/models/notification_filter.dart';
 import '../blog/blog_screen.dart';
 import '../core/format.dart';
+import '../core/state/dashboard_controller.dart';
 import '../core/state/notification_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/widgets/empty_state.dart';
+import '../core/widgets/filter_bar.dart';
 import '../core/widgets/in_app_browser.dart';
 
 /// The notification inbox.
@@ -23,6 +26,8 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
+  NotificationFilter _filter = NotificationFilter.all;
+
   @override
   void initState() {
     super.initState();
@@ -37,6 +42,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget build(BuildContext context) {
     final controller = context.watch<NotificationController>();
     final scheme = Theme.of(context).colorScheme;
+
+    final chips = NotificationFilter.available(controller.items);
+    // The chosen bucket can empty out under the student — reading the last
+    // message in it, say — and a chip that is no longer offered must not go on
+    // filtering the list from off screen.
+    final filter = chips.contains(_filter) ? _filter : NotificationFilter.all;
+    final visible = controller.items.where(filter.matches).toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -61,23 +73,38 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               ),
             if (controller.error != null && !controller.isLoading)
               _OfflineStrip(message: controller.error!),
+            if (chips.length > 1)
+              _FilterChips(
+                filters: chips,
+                selected: filter,
+                countOf: (f) => controller.items.where(f.matches).length,
+                onSelected: (f) => setState(() => _filter = f),
+              ),
             Expanded(
               child: RefreshIndicator(
                 onRefresh: controller.refresh,
-                child: controller.isEmpty
+                child: visible.isEmpty
                     ? ListView(
                         // A scrollable is required for pull-to-refresh to work
                         // on an otherwise empty screen.
                         physics: const AlwaysScrollableScrollPhysics(),
-                        children: const [
-                          SizedBox(height: Tokens.s10),
-                          EmptyState(
-                            icon: Icons.notifications_none_outlined,
-                            title: 'No notifications yet',
-                            message:
-                                'Announcements, class reminders and results '
-                                'will show up here.',
-                          ),
+                        children: [
+                          const SizedBox(height: Tokens.s10),
+                          if (controller.isEmpty)
+                            const EmptyState(
+                              icon: Icons.notifications_none_outlined,
+                              title: 'No notifications yet',
+                              message:
+                                  'Announcements, class reminders and results '
+                                  'will show up here.',
+                            )
+                          else
+                            EmptyState(
+                              icon: Icons.filter_alt_off_outlined,
+                              title: 'Nothing under ${filter.label}',
+                              message:
+                                  'Tap All to see everything in your inbox.',
+                            ),
                         ],
                       )
                     : ListView.separated(
@@ -88,12 +115,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           Tokens.s4,
                           Tokens.s10,
                         ),
-                        itemCount: controller.items.length,
+                        itemCount: visible.length,
                         separatorBuilder: (_, _) =>
                             const SizedBox(height: Tokens.s3),
                         itemBuilder: (context, i) => _NotificationTile(
-                          notification: controller.items[i],
-                          onTap: () => _open(controller.items[i]),
+                          notification: visible[i],
+                          onTap: () => _open(visible[i]),
                         ),
                       ),
               ),
@@ -106,6 +133,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _open(AppNotification notification) async {
     context.read<NotificationController>().markRead(notification);
+
+    // A message goes straight to the conversation it came from. Showing a
+    // student the text of a message in a sheet, with a Close button under it,
+    // and making them find the chat themselves is the one thing this screen
+    // must not do — the whole point of tapping it is to reply.
+    final chatId = notification.chatId;
+    if (chatId != null) {
+      final dashboard = context.read<DashboardController>();
+      Navigator.of(context).pop();
+      dashboard.openChat(chatId);
+      return;
+    }
+
     // The sheet closes with the article it wants opened, if it had one — the
     // browser is pushed from here rather than from inside the sheet, which is
     // gone by the time the new route is built.
@@ -117,6 +157,47 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (!mounted || article == null) return;
     await openInAppBrowser(context, article, title: 'NLTC Blog');
   }
+}
+
+/// The bucket chips above the list.
+///
+/// Scrolls sideways rather than wrapping: a second row of chips would push the
+/// first notification off a small screen, and the inbox is the thing worth
+/// seeing.
+class _FilterChips extends StatelessWidget {
+  const _FilterChips({
+    required this.filters,
+    required this.selected,
+    required this.countOf,
+    required this.onSelected,
+  });
+
+  final List<NotificationFilter> filters;
+  final NotificationFilter selected;
+  final int Function(NotificationFilter) countOf;
+  final ValueChanged<NotificationFilter> onSelected;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        height: 36 + Tokens.s4,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(
+            Tokens.s4,
+            Tokens.s4,
+            Tokens.s4,
+            0,
+          ),
+          itemCount: filters.length,
+          separatorBuilder: (_, _) => const SizedBox(width: Tokens.s2),
+          itemBuilder: (context, i) => PillFilter(
+            label: filters[i].label,
+            selected: filters[i] == selected,
+            count: countOf(filters[i]),
+            onTap: () => onSelected(filters[i]),
+          ),
+        ),
+      );
 }
 
 class _OfflineStrip extends StatelessWidget {

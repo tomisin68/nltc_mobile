@@ -61,11 +61,20 @@ class _WrappedScreenState extends State<WrappedScreen> {
       return;
     }
 
-    final report = await context.read<WrappedRepository>().load(
-          uid: uid,
-          streak: session.profile?.streak ?? 0,
-          xp: session.profile?.xp ?? 0,
-        );
+    // A recap is a nice-to-have; nothing it can throw is worth an endless
+    // spinner. Anything that goes wrong lands on the "not ready yet" panel,
+    // which at least has a way out of the screen.
+    final WrappedReport report;
+    try {
+      report = await context.read<WrappedRepository>().load(
+            uid: uid,
+            streak: session.profile?.streak ?? 0,
+            xp: session.profile?.xp ?? 0,
+          );
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
     if (!mounted) return;
 
     final month = report.defaultMonth;

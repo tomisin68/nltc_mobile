@@ -130,9 +130,6 @@ class NltcApp extends StatelessWidget {
         Provider<PlatformReviewRepository>(
           create: (_) => PlatformReviewRepository(),
         ),
-        Provider<WrappedRepository>(
-          create: (context) => WrappedRepository(attempts: context.read()),
-        ),
         Provider<LearningProfileRepository>(
           create: (context) => LearningProfileRepository(
             api: context.read(),
@@ -177,6 +174,11 @@ class NltcApp extends StatelessWidget {
             api: context.read(),
             local: context.read(),
           ),
+        ),
+        // Below AttemptRepository on purpose — it reads one, and a provider can
+        // only reach the ones declared above it.
+        Provider<WrappedRepository>(
+          create: (context) => WrappedRepository(attempts: context.read()),
         ),
         Provider<NotificationRepository>(
           create: (context) => NotificationRepository(

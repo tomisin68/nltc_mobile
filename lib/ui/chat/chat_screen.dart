@@ -41,9 +41,17 @@ class _ChatScreenState extends State<ChatScreen> {
   /// context is how that becomes a crash instead of a sign-out.
   PresenceController? _presence;
 
+  /// Listened to for the same reason it is read below: a chat can be asked for
+  /// while this list is already on screen — the notification inbox does exactly
+  /// that — and the chat stream has no reason to emit again, so the request
+  /// would sit there unanswered.
+  DashboardController? _dashboard;
+
   @override
   void initState() {
     super.initState();
+    _dashboard = context.read<DashboardController>()
+      ..addListener(_onChatRequested);
     final uid = context.read<SessionController>().account?.uid;
     if (uid != null) {
       _subscription = context
@@ -62,6 +70,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _onChatRequested() => _openPendingChat(_chats ?? const []);
+
   /// A chat push was tapped: open that conversation once the list has it.
   void _openPendingChat(List<Chat> chats) {
     final dashboard = context.read<DashboardController>();
@@ -79,6 +89,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _dashboard?.removeListener(_onChatRequested);
     _subscription?.cancel();
     _presence?.untrack('chat-list');
     super.dispose();

@@ -33,6 +33,21 @@ class AppNotification {
   final DateTime createdAt;
   final bool read;
 
+  /// The conversation a chat notification came from, read back out of [route].
+  ///
+  /// The backend sends the id twice — as `data.chatId` and inside
+  /// `data.url` (`/dashboard?view=chat&chatId=…`) — but only the url survives
+  /// into the local table, so that is the copy this reads. Null for anything
+  /// that is not a message, which is what keeps the inbox from trying to open a
+  /// chat for an announcement.
+  String? get chatId {
+    if (category != 'chat_message') return null;
+    final raw = (route ?? '').trim();
+    if (raw.isEmpty) return null;
+    final id = Uri.tryParse(raw)?.queryParameters['chatId']?.trim();
+    return (id == null || id.isEmpty) ? null : id;
+  }
+
   AppNotification copyWith({bool? read}) => AppNotification(
         id: id,
         title: title,
