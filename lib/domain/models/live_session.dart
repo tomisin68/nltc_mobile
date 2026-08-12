@@ -196,6 +196,14 @@ class LiveSession {
       (createdAt ?? scheduledAt ?? DateTime.fromMillisecondsSinceEpoch(0))
           .millisecondsSinceEpoch;
 
+  /// Where this class sits on the timetable: the date it was given, or — for one
+  /// a tutor opened on the spot — the moment it went on air.
+  ///
+  /// Null means it belongs on no day at all, which is why the timetable drops
+  /// those rather than guessing a slot for them. `createdAt` is deliberately not
+  /// a fallback: when a tutor drafted a session says nothing about when it runs.
+  DateTime? get slotAt => scheduledAt ?? startedAt;
+
   bool isVisibleTo({required bool isJunior}) => switch (audience) {
         'bece' => isJunior,
         'regular' => !isJunior,

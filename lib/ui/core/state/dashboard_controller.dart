@@ -13,6 +13,7 @@ enum DashboardView {
   officialQuiz('NLTC Official Quiz'),
   quickTest('Quick Tests'),
   live('Live Classes'),
+  timetable('Timetable'),
   mockExams('Mock Exams'),
   leaderboard('Leaderboard'),
   announcements('Announcements'),

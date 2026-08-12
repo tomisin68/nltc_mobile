@@ -73,6 +73,27 @@ class LiveRepository {
         return sessions.take(limit).toList();
       });
 
+  /// Every session that sits on a day, soonest first — what the timetable reads.
+  ///
+  /// Two things separate this from [watchSessions]. It keeps only sessions with
+  /// a slot on the calendar, because a class with no date belongs on no day. And
+  /// it runs forwards rather than newest-first, because a timetable is read in
+  /// the direction time runs.
+  ///
+  /// Ended classes stay in and there is no limit: paging back a week should show
+  /// what was taught, and a cap of 20 would silently empty the far end of a busy
+  /// term. This shares the same collection snapshot the live hall already
+  /// listens to, so the extra listener costs no extra reads.
+  Stream<List<LiveSession>> watchTimetable({required bool isJunior}) =>
+      _db.collection('liveSessions').snapshots().map(
+            (snap) => snap.docs
+                .map((d) => LiveSession.fromMap(d.id, d.data()))
+                .where((s) => s.isVisibleTo(isJunior: isJunior))
+                .where((s) => s.slotAt != null)
+                .toList()
+              ..sort((a, b) => a.slotAt!.compareTo(b.slotAt!)),
+          );
+
   /// The live sessions right now — what the dashboard banner reads.
   Future<LiveSession?> currentlyLive({required bool isJunior}) async {
     try {

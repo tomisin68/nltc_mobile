@@ -29,6 +29,7 @@ import '../quiz/official_quiz_screen.dart';
 import '../profile/profile_screen.dart';
 import '../settings/settings_screen.dart';
 import '../support/support_fab.dart';
+import '../timetable/timetable_screen.dart';
 import 'access_banners.dart';
 import 'dashboard_sidebar.dart';
 import 'dashboard_topbar.dart';
@@ -209,6 +210,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       DashboardView.quickTest => QuickTestsScreen(key: key),
       DashboardView.mockExams => MockExamsScreen(key: key),
       DashboardView.live => LiveClassesScreen(key: key),
+      DashboardView.timetable => TimetableScreen(key: key),
       DashboardView.chat => ChatScreen(key: key),
       DashboardView.settings => SettingsScreen(key: key),
     };
