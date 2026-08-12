@@ -5,14 +5,23 @@ import 'package:provider/provider.dart';
 
 import '../../../data/repositories/chat_repository.dart';
 import '../../../domain/models/chat.dart';
+import '../../core/state/session_controller.dart';
 import '../../core/theme/app_palette.dart';
 import '../chat_screen.dart' show ChatAvatar;
 
-/// A search box over everyone this student can message, and the results under it.
+/// A search box over the people this student can pick, and the results under it.
 ///
 /// The one place the three pickers — new message, new group, add to group — get
 /// their list from, because they had drifted into three slightly different
 /// filters over three separately fetched copies of the same collection.
+///
+/// Which people depends on what is being started, and the difference is the
+/// point. Starting a *conversation* searches everyone: reaching a tutor you
+/// have never met is what the platform is for, and the person on the other end
+/// still gets to decline the request. Putting somebody in a *group* searches
+/// only [contactsOnly] — students this one already has an open conversation
+/// with — because an invitation reaches people who never asked to hear from
+/// you, and a group used to be a way around the request tray entirely.
 ///
 /// Searching is asked of the repository rather than done here: the cached
 /// directory is capped, so a name that isn't in it has to be looked up on the
@@ -26,6 +35,7 @@ class ContactSearchList extends StatefulWidget {
     this.exclude = const <String>{},
     this.multiSelect = false,
     this.autofocus = false,
+    this.contactsOnly = false,
     this.hintText = 'Search by name or email…',
   });
 
@@ -39,6 +49,11 @@ class ContactSearchList extends StatefulWidget {
 
   final bool multiSelect;
   final bool autofocus;
+
+  /// Restricts the list to people this student has an accepted direct message
+  /// with. What every group picker uses.
+  final bool contactsOnly;
+
   final String hintText;
 
   @override
@@ -87,8 +102,11 @@ class _ContactSearchListState extends State<ContactSearchList> {
     });
 
     try {
-      final found =
-          await context.read<ChatRepository>().searchContacts(query);
+      final chats = context.read<ChatRepository>();
+      final myUid = context.read<SessionController>().account?.uid;
+      final found = widget.contactsOnly && myUid != null
+          ? await chats.searchMessagedContacts(myUid, query)
+          : await chats.searchContacts(query);
       if (!mounted || generation != _generation) return;
       setState(() {
         _results = found;
@@ -159,11 +177,21 @@ class _ContactSearchListState extends State<ContactSearchList> {
                   child: CircularProgressIndicator(strokeWidth: 2.5),
                 ),
               ),
+            // An empty contacts-only list is not a failure, it is the rule
+            // working — so it says what the rule is, rather than leaving a
+            // student staring at a picker that looks broken.
             (final List<ChatContact> found, _) when found.isEmpty => _Notice(
                 icon: Icons.person_search_rounded,
-                message: _query.isEmpty
-                    ? 'Nobody to message yet.'
-                    : 'Nobody matches "$_query".',
+                message: switch ((widget.contactsOnly, _query.isEmpty)) {
+                  (true, true) =>
+                    'You can only add people you have already messaged. '
+                        'Start a conversation with someone first, and they '
+                        'will show up here once they accept.',
+                  (true, false) =>
+                    'Nobody you have messaged matches "$_query".',
+                  (false, true) => 'Nobody to message yet.',
+                  (false, false) => 'Nobody matches "$_query".',
+                },
               ),
             (final List<ChatContact> found, _) => ListView.builder(
                 shrinkWrap: true,

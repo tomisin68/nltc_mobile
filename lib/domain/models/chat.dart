@@ -18,8 +18,8 @@ enum ChatType {
 /// beside their study group, and that declining costs one tap and no
 /// explanation.
 ///
-/// Groups never carry one: you are put in a group by somebody, and leaving is
-/// the control that matters there.
+/// Groups answer the same question with [Chat.pendingMembers] instead, because
+/// a group is not one conversation with one person to ask.
 enum ChatRequestStatus {
   /// Waiting on [Chat.requestFor]. Only they can move it.
   pending,
@@ -72,6 +72,8 @@ class Chat {
     required this.id,
     required this.type,
     required this.members,
+    this.pendingMembers = const [],
+    this.invitedBy = const {},
     this.name,
     this.description,
     this.memberNames = const {},
@@ -94,8 +96,27 @@ class Chat {
   final String id;
   final ChatType type;
 
-  /// Firebase uids. Immutable once created, per the rules.
+  /// Firebase uids of everyone actually in the conversation.
+  ///
+  /// For a group this only ever grows by somebody accepting an invitation:
+  /// the rules let an admin write [pendingMembers], and let nobody but the
+  /// invited student move their own uid across into here.
   final List<String> members;
+
+  /// Firebase uids who have been invited to a group and have not answered yet.
+  ///
+  /// They can read this document — they have to see what they are being asked
+  /// to join — and nothing else: the messages are shut to them until they are
+  /// in [members]. Always empty for a DM, where [requestStatus] asks the same
+  /// question of the one person it concerns.
+  final List<String> pendingMembers;
+
+  /// uid of an invited student → uid of whoever invited them.
+  ///
+  /// What lets the invitation say "Ada added you" rather than "you have been
+  /// added", which is the difference between a person asking and a system
+  /// announcing.
+  final Map<String, String> invitedBy;
 
   /// The group's name. Null for a DM, which is titled after the other person.
   final String? name;
@@ -166,6 +187,26 @@ class Chat {
       requestStatus == ChatRequestStatus.pending &&
       uid != null &&
       requestFor == uid;
+
+  /// True when [uid] has been invited to this group and hasn't answered.
+  ///
+  /// The whole group is held out of their conversation list while this is
+  /// true — they can see the invitation and nothing else.
+  bool isInvitePendingFor(String? uid) =>
+      uid != null && pendingMembers.contains(uid);
+
+  /// Whoever invited [uid], as a name to put in the invitation.
+  String? inviterNameFor(String uid) {
+    final inviter = invitedBy[uid];
+    return inviter == null ? null : memberNames[inviter];
+  }
+
+  /// Everyone waiting on an invitation, with the ones who can be named first —
+  /// a settings list wants to show people, not uids.
+  List<String> get invitees => [
+        for (final uid in pendingMembers)
+          if (!members.contains(uid)) uid,
+      ];
 
   /// True when [uid] sent the request and is still waiting.
   bool isAwaitingReplyFrom(String? uid) =>
@@ -317,6 +358,14 @@ class Chat {
       });
     }
 
+    final invitedBy = <String, String>{};
+    if (m['invitedBy'] is Map) {
+      (m['invitedBy'] as Map).forEach((key, value) {
+        final inviter = _str(value);
+        if (inviter != null) invitedBy[key.toString()] = inviter;
+      });
+    }
+
     final activity = tsToMs(m['lastActivity']);
 
     return Chat(
@@ -325,6 +374,15 @@ class Chat {
       members: m['members'] is List
           ? (m['members'] as List).map((e) => e.toString()).toList()
           : const [],
+      // Absent on every DM and on every group made before invitations existed,
+      // which reads correctly as "nobody is waiting".
+      pendingMembers: m['pendingMembers'] is List
+          ? [
+              for (final uid in m['pendingMembers'] as List)
+                if (_str(uid) != null) uid.toString().trim(),
+            ]
+          : const [],
+      invitedBy: invitedBy,
       name: _str(m['name']),
       description: _str(m['description']),
       memberNames: names,

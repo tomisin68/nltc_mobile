@@ -210,6 +210,74 @@ void main() {
     });
   });
 
+  group('Chat group invitations', () {
+    Chat invited({
+      List<String> members = const [me],
+      List<String> pendingMembers = const [them],
+      Map<String, String> invitedBy = const {them: me},
+    }) =>
+        Chat(
+          id: 'g1',
+          type: ChatType.group,
+          members: members,
+          pendingMembers: pendingMembers,
+          invitedBy: invitedBy,
+          memberNames: const {me: 'Ada', them: 'Chidi'},
+        );
+
+    test('an invited student is not a member of the group', () {
+      final chat = invited();
+      expect(chat.isInvitePendingFor(them), isTrue);
+      expect(chat.members.contains(them), isFalse);
+      expect(chat.invitees, [them]);
+    });
+
+    test('somebody who has joined is no longer waiting', () {
+      final chat = invited(members: const [me, them], pendingMembers: const []);
+      expect(chat.isInvitePendingFor(them), isFalse);
+      expect(chat.invitees, isEmpty);
+    });
+
+    test('an invitation that outlived the join is not counted twice', () {
+      // Belt and braces: the rules clear `pendingMembers` on accept, but a
+      // group whose two fields disagree should read as joined, not as both.
+      final chat = invited(members: const [me, them]);
+      expect(chat.invitees, isEmpty);
+    });
+
+    test('the invitation names whoever sent it', () {
+      expect(invited().inviterNameFor(them), 'Ada');
+    });
+
+    test('an invitation from somebody unnamed still reads', () {
+      final chat = invited(invitedBy: const {them: 'ghost'});
+      expect(chat.inviterNameFor(them), isNull);
+    });
+
+    test('a group written before invitations existed has nobody waiting', () {
+      final chat = Chat.fromMap('g1', {
+        'type': 'group',
+        'members': [me, them],
+        'groupAdmin': me,
+      });
+      expect(chat.pendingMembers, isEmpty);
+      expect(chat.invitees, isEmpty);
+      expect(chat.isInvitePendingFor(them), isFalse);
+    });
+
+    test('reads the invitation fields off the document', () {
+      final chat = Chat.fromMap('g1', {
+        'type': 'group',
+        'members': [me],
+        'pendingMembers': [them, third],
+        'invitedBy': {them: me, third: me},
+        'memberNames': {me: 'Ada'},
+      });
+      expect(chat.invitees, [them, third]);
+      expect(chat.inviterNameFor(third), 'Ada');
+    });
+  });
+
   group('Chat.fromMap', () {
     test('reads both admin spellings', () {
       final chat = Chat.fromMap('g1', {

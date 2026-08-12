@@ -16,6 +16,7 @@ import '../core/widgets/empty_state.dart';
 import '../core/widgets/page_header.dart';
 import '../core/widgets/skeleton.dart';
 import 'conversation_screen.dart';
+import 'group_invites_screen.dart';
 import 'message_requests_screen.dart';
 import 'widgets/contact_search_list.dart';
 
@@ -33,7 +34,15 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<List<Chat>>? _subscription;
+
+  /// Groups this student has been asked to join, which are deliberately not in
+  /// [_chats]: an unanswered invitation is a decision, not a conversation, and
+  /// the query behind it is a different one — you are not yet a member of the
+  /// thing you are being invited to.
+  StreamSubscription<List<Chat>>? _inviteSubscription;
+
   List<Chat>? _chats;
+  List<Chat> _invites = const [];
   String _search = '';
 
   /// Held rather than looked up in `dispose`: on sign-out the providers above
@@ -54,19 +63,27 @@ class _ChatScreenState extends State<ChatScreen> {
       ..addListener(_onChatRequested);
     final uid = context.read<SessionController>().account?.uid;
     if (uid != null) {
-      _subscription = context
-          .read<ChatRepository>()
-          .watchChats(uid)
-          .listen(
-            (chats) {
-              if (!mounted) return;
-              setState(() => _chats = chats);
-              _openPendingChat(chats);
-            },
-            onError: (_) {
-              if (mounted) setState(() => _chats = const []);
-            },
-          );
+      final chats = context.read<ChatRepository>();
+      _subscription = chats.watchChats(uid).listen(
+        (chats) {
+          if (!mounted) return;
+          setState(() => _chats = chats);
+          _openPendingChat(chats);
+        },
+        onError: (_) {
+          if (mounted) setState(() => _chats = const []);
+        },
+      );
+      _inviteSubscription = chats.watchGroupInvites(uid).listen(
+        (invites) {
+          if (mounted) setState(() => _invites = invites);
+        },
+        // An invitation nobody can load is not worth an error on the
+        // conversation list; the banner simply doesn't appear.
+        onError: (_) {
+          if (mounted) setState(() => _invites = const []);
+        },
+      );
     }
   }
 
@@ -91,6 +108,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _dashboard?.removeListener(_onChatRequested);
     _subscription?.cancel();
+    _inviteSubscription?.cancel();
     _presence?.untrack('chat-list');
     super.dispose();
   }
@@ -204,6 +222,13 @@ class _ChatScreenState extends State<ChatScreen> {
         contacts: result.members,
       );
       if (!mounted) return;
+      showToast(
+        result.members.length == 1
+            ? 'Invitation sent. They join when they accept.'
+            : '${result.members.length} invitations sent. They join when they '
+                'accept.',
+        variant: ToastVariant.success,
+      );
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => ConversationScreen(chatId: chatId),
@@ -281,9 +306,28 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           const SizedBox(height: Tokens.s4),
+          if (_invites.isNotEmpty) ...[
+            _TrayBanner(
+              icon: Icons.group_add_rounded,
+              title: 'Group invitations',
+              subtitle: _invites.length == 1
+                  ? '1 group is waiting for your answer'
+                  : '${_invites.length} groups are waiting for your answer',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => GroupInvitesScreen(invites: _invites),
+                ),
+              ),
+            ),
+            const SizedBox(height: Tokens.s3),
+          ],
           if (requests.isNotEmpty) ...[
-            _RequestsBanner(
-              count: requests.length,
+            _TrayBanner(
+              icon: Icons.mark_email_unread_rounded,
+              title: 'Message requests',
+              subtitle: requests.length == 1
+                  ? '1 student you have not spoken to'
+                  : '${requests.length} students you have not spoken to',
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => MessageRequestsScreen(requests: requests),
@@ -333,15 +377,23 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-/// The way into the requests tray.
+/// The way into a tray of things waiting to be answered — message requests, or
+/// group invitations.
 ///
-/// Deliberately a count and nothing else — no name, no message preview. A
-/// student should be able to see that someone is asking without the asking
-/// itself landing on their screen.
-class _RequestsBanner extends StatelessWidget {
-  const _RequestsBanner({required this.count, required this.onTap});
+/// Deliberately a count and nothing else — no name, no message preview, no
+/// group name. A student should be able to see that someone is asking without
+/// the asking itself landing on their screen.
+class _TrayBanner extends StatelessWidget {
+  const _TrayBanner({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
 
-  final int count;
+  final IconData icon;
+  final String title;
+  final String subtitle;
   final VoidCallback onTap;
 
   @override
@@ -361,27 +413,21 @@ class _RequestsBanner extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(
-                Icons.mark_email_unread_rounded,
-                size: 20,
-                color: scheme.primary,
-              ),
+              Icon(icon, size: 20, color: scheme.primary),
               const SizedBox(width: Tokens.s3),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Message requests',
-                      style: TextStyle(
+                    Text(
+                      title,
+                      style: const TextStyle(
                         fontSize: 13.5,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     Text(
-                      count == 1
-                          ? '1 student you have not spoken to'
-                          : '$count students you have not spoken to',
+                      subtitle,
                       style: TextStyle(
                         fontSize: 11.5,
                         color: scheme.onSurfaceVariant,
@@ -732,8 +778,8 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
             const SizedBox(height: Tokens.s3),
             Text(
               _picked.isEmpty
-                  ? 'Add members'
-                  : '${_picked.length} member${_picked.length == 1 ? '' : 's'} added',
+                  ? 'Invite people you have messaged'
+                  : '${_picked.length} ${_picked.length == 1 ? 'person' : 'people'} to invite',
               style: TextStyle(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w800,
@@ -744,10 +790,19 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
             Flexible(
               child: ContactSearchList(
                 multiSelect: true,
+                contactsOnly: true,
                 exclude: widget.exclude,
                 selected: {for (final c in _picked) c.uid},
                 onTap: _toggle,
               ),
+            ),
+            const SizedBox(height: Tokens.s2),
+            // Said before the button rather than after the failure: a group
+            // that appears with only you in it is confusing unless you were
+            // told to expect it.
+            Text(
+              'They join when they accept.',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: Tokens.s3),
             SizedBox(
@@ -763,8 +818,8 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
                   _name.text.trim().isEmpty
                       ? 'Name the group'
                       : _picked.isEmpty
-                          ? 'Add someone'
-                          : 'Create group',
+                          ? 'Invite someone'
+                          : 'Create and invite',
                 ),
               ),
             ),

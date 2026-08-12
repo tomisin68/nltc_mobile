@@ -139,31 +139,71 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     }
   }
 
-  Future<void> _addMembers() async {
+  Future<void> _inviteMembers() async {
     final chat = _chat;
     final session = context.read<SessionController>();
-    if (chat == null) return;
+    final uid = session.account?.uid;
+    if (chat == null || uid == null) return;
 
     final chats = context.read<ChatRepository>();
 
     final picked = await showModalBottomSheet<List<ChatContact>>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _MemberPicker(exclude: chat.members.toSet()),
+      // Anyone already here, and anyone already asked, is not somebody to ask
+      // again.
+      builder: (_) => _MemberPicker(
+        exclude: {...chat.members, ...chat.pendingMembers},
+      ),
     );
     if (picked == null || picked.isEmpty || !mounted) return;
 
     try {
-      await chats.addMembers(
+      await chats.inviteMembers(
         widget.chatId,
         chat: chat,
         contacts: picked,
+        byUid: uid,
         byName: session.profile?.displayName ?? 'Someone',
       );
+      if (mounted) {
+        showToast(
+          picked.length == 1
+              ? 'Invitation sent. They join when they accept.'
+              : '${picked.length} invitations sent.',
+          variant: ToastVariant.success,
+        );
+      }
     } catch (error) {
       if (mounted) {
         showToast(
-          error is ApiException ? error.message : 'Could not add them.',
+          error is ApiException ? error.message : 'Could not invite them.',
+          variant: ToastVariant.error,
+        );
+      }
+    }
+  }
+
+  Future<void> _withdrawInvite(String uid, String name) async {
+    final confirmed = await _confirm(
+      title: 'Withdraw the invitation to $name?',
+      message: 'They will no longer see this group. Nobody is told.',
+      action: 'Withdraw',
+      destructive: true,
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await context.read<ChatRepository>().withdrawInvite(
+            widget.chatId,
+            uid: uid,
+          );
+    } catch (error) {
+      if (mounted) {
+        showToast(
+          error is ApiException
+              ? error.message
+              : 'Could not withdraw that invitation.',
           variant: ToastVariant.error,
         );
       }
@@ -524,9 +564,9 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                   padding: EdgeInsets.zero,
                   headerTrailing: _isAdmin
                       ? CardAction(
-                          label: 'Add',
+                          label: 'Invite',
                           icon: Icons.person_add_rounded,
-                          onTap: _addMembers,
+                          onTap: _inviteMembers,
                         )
                       : null,
                   child: Column(
@@ -573,6 +613,58 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                     ],
                   ),
                 ),
+
+                // Held apart from the members, because they are not members —
+                // they have been asked and have not answered, and showing them
+                // in the same list is exactly the confusion that made "added"
+                // feel like a thing that had already happened.
+                if (chat.invitees.isNotEmpty) ...[
+                  const SizedBox(height: Tokens.s4),
+                  AppCard(
+                    title: '${chat.invitees.length} invited',
+                    titleIcon: Icons.schedule_send_rounded,
+                    padding: EdgeInsets.zero,
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                            Tokens.s4,
+                            0,
+                            Tokens.s4,
+                            Tokens.s2,
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'They join when they accept. Until then they '
+                              'cannot read anything here.',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                height: 1.45,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ),
+                        for (final invitee in chat.invitees)
+                          _InviteeRow(
+                            name: chat.memberNames[invitee] ?? 'Student',
+                            photo: chat.memberPhotos[invitee],
+                            invitedBy: chat.invitedBy[invitee] == myUid
+                                ? 'You invited them'
+                                : 'Invited by '
+                                    '${chat.inviterNameFor(invitee) ?? 'an admin'}',
+                            onWithdraw: _isAdmin
+                                ? () => _withdrawInvite(
+                                      invitee,
+                                      chat.memberNames[invitee] ?? 'them',
+                                    )
+                                : null,
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: Tokens.s5),
 
                 OutlinedButton.icon(
@@ -678,11 +770,59 @@ class _MemberRow extends StatelessWidget {
   }
 }
 
-/// Multi-select picker for adding people to a group.
+/// Somebody who has been asked to join and hasn't answered.
+class _InviteeRow extends StatelessWidget {
+  const _InviteeRow({
+    required this.name,
+    required this.photo,
+    required this.invitedBy,
+    required this.onWithdraw,
+  });
+
+  final String name;
+  final String? photo;
+  final String invitedBy;
+
+  /// Null for anyone who isn't an admin — an invitation is the admins' to take
+  /// back.
+  final VoidCallback? onWithdraw;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: Tokens.s4),
+      // No presence dot: whether somebody who hasn't joined is online is not
+      // this group's business.
+      leading: Opacity(
+        opacity: 0.65,
+        child: ChatAvatar(url: photo, fallback: name, size: 38),
+      ),
+      title: Text(
+        name,
+        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+      ),
+      subtitle: Text(
+        invitedBy,
+        style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+      ),
+      trailing: onWithdraw == null
+          ? null
+          : IconButton(
+              onPressed: onWithdraw,
+              icon: const Icon(Icons.undo_rounded, size: 18),
+              tooltip: 'Withdraw invitation',
+            ),
+    );
+  }
+}
+
+/// Multi-select picker for inviting people to a group.
 class _MemberPicker extends StatefulWidget {
   const _MemberPicker({required this.exclude});
 
-  /// Everyone already in the group.
+  /// Everyone already in the group, or already invited to it.
   final Set<String> exclude;
 
   @override
@@ -717,7 +857,7 @@ class _MemberPickerState extends State<_MemberPicker> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Add members${_picked.isEmpty ? '' : ' (${_picked.length})'}',
+              'Invite members${_picked.isEmpty ? '' : ' (${_picked.length})'}',
               style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w800,
@@ -728,10 +868,16 @@ class _MemberPickerState extends State<_MemberPicker> {
             Flexible(
               child: ContactSearchList(
                 multiSelect: true,
+                contactsOnly: true,
                 exclude: widget.exclude,
                 selected: {for (final c in _picked) c.uid},
                 onTap: _toggle,
               ),
+            ),
+            const SizedBox(height: Tokens.s2),
+            Text(
+              'They join when they accept.',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: Tokens.s3),
             SizedBox(
@@ -742,8 +888,8 @@ class _MemberPickerState extends State<_MemberPicker> {
                     : () => Navigator.of(context).pop(_picked),
                 child: Text(
                   _picked.isEmpty
-                      ? 'Select people to add'
-                      : 'Add ${_picked.length}',
+                      ? 'Select people to invite'
+                      : 'Invite ${_picked.length}',
                 ),
               ),
             ),

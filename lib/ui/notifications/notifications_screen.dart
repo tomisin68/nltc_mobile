@@ -245,6 +245,7 @@ class _NotificationTile extends StatelessWidget {
   /// than nothing, so a new server-side category never renders a blank tile.
   static IconData _iconFor(String? category) => switch (category) {
         'chat_message' => Icons.forum_outlined,
+        'group_invite' => Icons.group_add_outlined,
         'class_reminder' || 'live_class' => Icons.videocam_outlined,
         // `new_blog` is what the backend actually sends; the older name is kept
         // for rows already sitting in a student's inbox.

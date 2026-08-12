@@ -29,7 +29,7 @@ enum NotificationFilter {
   /// sitting in a student's inbox were written under whatever the backend
   /// called them at the time.
   static const _types = <NotificationFilter, Set<String>>{
-    NotificationFilter.messages: {'chat_message'},
+    NotificationFilter.messages: {'chat_message', 'group_invite'},
     NotificationFilter.announcements: {
       'announcement',
       'center_announcement_alert',

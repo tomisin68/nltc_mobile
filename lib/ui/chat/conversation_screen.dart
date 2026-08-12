@@ -741,7 +741,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
         : chat == null
             ? ''
             : chat.isGroup
+                // Invitations are counted separately, never folded into the
+                // membership: a group of three with two people thinking about
+                // it is not a group of five, and saying so is what stops a
+                // newly made group reading as broken.
                 ? '${chat.members.length} members'
+                    '${chat.invitees.isEmpty ? '' : ' · ${chat.invitees.length} invited'}'
                 : online
                     ? 'Online'
                     : lastSeenLabel(presence.lastSeen);

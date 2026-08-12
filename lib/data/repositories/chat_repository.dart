@@ -10,9 +10,14 @@ import '../services/api_client.dart';
 /// Direct messages and group chats.
 ///
 /// Reads and writes the same `chats` collection the website's ChatView uses, so a
-/// conversation started in a browser continues in the app. The rules make members
-/// immutable after creation and let a member update only the mutable fields, so
-/// every write here is shaped to that.
+/// conversation started in a browser continues in the app.
+///
+/// The one shape everything here is built around: **nobody is put into a group
+/// by somebody else.** An admin writes a uid into `pendingMembers`, and the only
+/// writer the rules will let move it across into `members` is that uid. So the
+/// group-administration methods below come in pairs — one for the person doing
+/// the inviting, one for the person answering — and there is deliberately no
+/// method that adds a member outright, because the server would refuse it.
 class ChatRepository {
   ChatRepository({
     required ApiClient api,
@@ -58,6 +63,26 @@ class ChatRepository {
         });
         return chats;
       });
+
+  /// Groups this student has been invited to and not yet answered.
+  ///
+  /// A separate query rather than a widening of [watchChats], because the two
+  /// lists mean different things and are shown in different places: these are
+  /// decisions waiting to be made, not conversations. The rules let an invited
+  /// student read the chat document — the group's name and who invited them,
+  /// which is what an invitation has to say — while its messages stay shut
+  /// until they accept.
+  Stream<List<Chat>> watchGroupInvites(String uid) => _chats
+      .where('pendingMembers', arrayContains: uid)
+      .snapshots()
+      .map(
+        (snap) => [
+          for (final doc in snap.docs)
+            if (Chat.fromMap(doc.id, doc.data()) case final chat
+                when chat.isGroup && !chat.members.contains(uid))
+              chat,
+        ],
+      );
 
   Stream<Chat?> watchChat(String chatId) => _chat(chatId).snapshots().map(
         (snap) => snap.exists ? Chat.fromMap(snap.id, snap.data() ?? {}) : null,
@@ -155,13 +180,8 @@ class ChatRepository {
   }
 
   /// Why the server turned a message away.
-  ///
-  /// Nearly always the announcements-only lock: the deployed rules recognise one
-  /// `groupAdmin` and this app recognises several, so a co-admin posting to a
-  /// locked group is refused by a rule that has not caught up with the feature.
   static String _postRefusal(Chat chat) => chat.locked
-      ? 'This group is set to announcements only, and the server still allows '
-          'just its original admin to post.'
+      ? 'This group is set to announcements only — only its admins can post.'
       : 'You cannot post in this conversation.';
 
   /// Clears this student's unread badge and stamps them as caught up.
@@ -332,6 +352,31 @@ class ChatRepository {
     }
   }
 
+  /// Tells [uids] they have been invited to a group.
+  ///
+  /// Best-effort, like every other push here. It matters more than most,
+  /// though: an invitation nobody is told about is one that sits unanswered,
+  /// and the whole point of asking is that somebody gets to answer.
+  Future<void> _notifyInvitees({
+    required String chatId,
+    required String groupName,
+    required String inviterName,
+    required List<String> uids,
+  }) async {
+    if (uids.isEmpty) return;
+    try {
+      await _api.post('/notifications/group-invite', {
+        'chatId': chatId,
+        'uids': uids,
+        'groupName': groupName,
+        'inviterName': inviterName,
+      });
+    } catch (_) {
+      // The invitation itself is stored either way, and both clients show it
+      // in the invitations tray whether or not a push went out.
+    }
+  }
+
   Future<void> setTyping(String chatId, String uid, bool typing) async {
     try {
       await _chat(chatId).update({
@@ -442,10 +487,15 @@ class ChatRepository {
   ///
   /// Only the student the request was addressed to may call this — the rules
   /// reject it from anyone else, so a sender cannot accept on their own behalf.
-  Future<void> acceptRequest(String chatId) => _chat(chatId).update({
-        'requestStatus': ChatRequestStatus.accepted.wire,
-        'requestRespondedAt': FieldValue.serverTimestamp(),
-      });
+  Future<void> acceptRequest(String chatId) async {
+    await _chat(chatId).update({
+      'requestStatus': ChatRequestStatus.accepted.wire,
+      'requestRespondedAt': FieldValue.serverTimestamp(),
+    });
+    // The sender is now somebody this student has spoken to, which is what
+    // decides who they can be invited into a group with.
+    forgetMessagedContacts();
+  }
 
   /// Reports a conversation to the admins, history and all.
   ///
@@ -475,7 +525,12 @@ class ChatRepository {
         'requestRespondedAt': FieldValue.serverTimestamp(),
       });
 
-  /// Creates a group with [contacts] in it, and posts the opening notice.
+  /// Creates a group and invites [contacts] to it.
+  ///
+  /// The group starts with its creator alone in it. Everyone else is invited,
+  /// and joins when — if — they accept: the rules reject a group created with
+  /// anybody else already inside, so this is not a policy the app is being
+  /// polite about, it is the only shape the server will store.
   Future<String> createGroup({
     required String name,
     required String myUid,
@@ -491,7 +546,12 @@ class ChatRepository {
       'type': 'group',
       'name': title,
       'description': '',
-      'members': [myUid, ...contacts.map((c) => c.uid)],
+      'members': [myUid],
+      'pendingMembers': [for (final c in contacts) c.uid],
+      'invitedBy': {for (final c in contacts) c.uid: myUid},
+      // Names and photos cover the invited as well as the joined: the
+      // invitation card has to be able to say who is asking, and it is read by
+      // somebody who cannot see anything else about this group yet.
       'memberNames': {
         myUid: myName,
         for (final c in contacts) c.uid: c.name,
@@ -500,8 +560,9 @@ class ChatRepository {
         myUid: myPhoto,
         for (final c in contacts) c.uid: c.photo,
       },
-      // Both spellings: `groupAdmin` is the only one the website and the
-      // Firestore rules read, `groupAdmins` is the list this app manages.
+      // Both spellings: `groupAdmin` is the founder, which every version of the
+      // website and the rules have always read, and `groupAdmins` is the list
+      // that lets a group have more than one at a time.
       'groupAdmin': myUid,
       'groupAdmins': [myUid],
       'locked': false,
@@ -516,19 +577,72 @@ class ChatRepository {
       'text': '$myName created the group "$title"',
       'timestamp': FieldValue.serverTimestamp(),
     });
+    unawaited(
+      _notifyInvitees(
+        chatId: ref.id,
+        groupName: title,
+        inviterName: myName,
+        uids: [for (final c in contacts) c.uid],
+      ),
+    );
     return ref.id;
   }
 
+  // ─── Group invitations ────────────────────────────────────────────────────
+
+  /// Accepts an invitation: joins the group and says so in the thread.
+  ///
+  /// Two writes, in this order and not the other: the announcement can only be
+  /// posted by a member, so joining has to land first.
+  Future<void> acceptGroupInvite(
+    String chatId, {
+    required String uid,
+    required String name,
+  }) async {
+    await _guarded(
+      () => _chat(chatId).update({
+        'members': FieldValue.arrayUnion([uid]),
+        'pendingMembers': FieldValue.arrayRemove([uid]),
+      }),
+      'That invitation is no longer open.',
+    );
+    await _announce(chatId, '$name joined the group');
+  }
+
+  /// Turns an invitation down.
+  ///
+  /// Nothing is announced. Declining is not news the group is owed, and a
+  /// student who does not want to join should not have to explain it to a room
+  /// full of people — the same reasoning as a declined message request.
+  Future<void> declineGroupInvite(String chatId, {required String uid}) =>
+      _guarded(
+        () => _chat(chatId).update({
+          'pendingMembers': FieldValue.arrayRemove([uid]),
+        }),
+        'That invitation is no longer open.',
+      );
+
+  /// Takes back an invitation nobody has answered yet. Admins only.
+  Future<void> withdrawInvite(
+    String chatId, {
+    required String uid,
+  }) =>
+      _guarded(
+        () => _chat(chatId).update({
+          'pendingMembers': FieldValue.arrayRemove([uid]),
+          'invitedBy.$uid': FieldValue.delete(),
+        }),
+        'Only an admin can withdraw an invitation.',
+      );
+
   // ─── Group administration ─────────────────────────────────────────────────
 
-  /// Runs a group write, turning a rules rejection into something a student can
+  /// Runs a chat write, turning a rules rejection into something a student can
   /// read.
   ///
-  /// The deployed `firestore.rules` are older than parts of this screen: they
-  /// hold `members` immutable after a chat is created, and let only the single
-  /// `groupAdmin` post in a locked group. Both are things the app now offers, so
-  /// until the rules catch up the honest thing is to say which wall was hit
-  /// rather than showing "try again" for something trying again cannot fix.
+  /// The roster rules are strict on purpose, and a student who trips one is
+  /// owed the reason rather than "try again" — trying again cannot fix being
+  /// refused. [refusal] is what that particular wall means.
   Future<T> _guarded<T>(Future<T> Function() write, String refusal) async {
     try {
       return await write();
@@ -538,13 +652,24 @@ class ChatRepository {
     }
   }
 
-  /// Posts one of the chat's own announcements — "Ada added Chidi".
-  Future<void> _announce(String chatId, String text) =>
-      _messages(chatId).add({
+  /// Posts one of the chat's own announcements — "Ada invited Chidi".
+  ///
+  /// Never throws. Every one of these is a courtesy attached to something that
+  /// has already been decided, and an announcement-only group refuses posts
+  /// from anyone but its admins — including the notice that somebody just
+  /// joined or left it. Letting that refusal surface would mean a student
+  /// could not leave a locked group at all, which is precisely backwards.
+  Future<void> _announce(String chatId, String text) async {
+    try {
+      await _messages(chatId).add({
         'type': 'system',
         'text': text,
         'timestamp': FieldValue.serverTimestamp(),
       });
+    } catch (_) {
+      // The thing being announced stands whether or not the notice landed.
+    }
+  }
 
   Future<void> saveGroupInfo(
     String chatId, {
@@ -572,33 +697,50 @@ class ChatRepository {
     return url;
   }
 
-  /// Adds people to an existing group, and says so in the thread.
+  /// Invites people to an existing group, and says so in the thread.
   ///
-  /// The names and photos are denormalised onto the chat alongside the member
-  /// list, because that is what the conversation list reads.
-  Future<void> addMembers(
+  /// They do not join here — they are asked. The names and photos are
+  /// denormalised onto the chat alongside the invitation because an invited
+  /// student can read this document and nothing else, so everything their
+  /// invitation needs to name has to already be on it.
+  Future<void> inviteMembers(
     String chatId, {
     required Chat chat,
     required List<ChatContact> contacts,
+    required String byUid,
     required String byName,
   }) async {
-    final fresh =
-        contacts.where((c) => !chat.members.contains(c.uid)).toList();
+    final fresh = contacts
+        .where(
+          (c) =>
+              !chat.members.contains(c.uid) &&
+              !chat.pendingMembers.contains(c.uid),
+        )
+        .toList();
     if (fresh.isEmpty) return;
 
     await _guarded(
       () => _chat(chatId).update({
-        'members': [...chat.members, ...fresh.map((c) => c.uid)],
+        'pendingMembers':
+            FieldValue.arrayUnion([for (final c in fresh) c.uid]),
+        for (final contact in fresh) 'invitedBy.${contact.uid}': byUid,
         for (final contact in fresh) 'memberNames.${contact.uid}': contact.name,
         for (final contact in fresh)
           'memberPhotos.${contact.uid}': contact.photo,
       }),
-      'This group\'s membership is locked on the server. Ask an NLTC admin to '
-          'update the chat rules.',
+      'Only an admin can invite people to this group.',
     );
     await _announce(
       chatId,
-      '$byName added ${fresh.map((c) => c.name).join(', ')}',
+      '$byName invited ${fresh.map((c) => c.name).join(', ')}',
+    );
+    unawaited(
+      _notifyInvitees(
+        chatId: chatId,
+        groupName: chat.name ?? 'a group',
+        inviterName: byName,
+        uids: [for (final c in fresh) c.uid],
+      ),
     );
   }
 
@@ -621,14 +763,17 @@ class ChatRepository {
     final admins = chat.admins.where((a) => a != uid).toList();
     await _guarded(
       () => _chat(chatId).update({
-        'members': chat.members.where((m) => m != uid).toList(),
+        // `arrayRemove` rather than the filtered list this app is holding: the
+        // rules compare the result against the stored roster, and somebody
+        // joining between the read and this write would otherwise make the
+        // comparison — and the removal — fail.
+        'members': FieldValue.arrayRemove([uid]),
         if (chat.isAdmin(uid)) ...{
           'groupAdmins': admins,
           if (chat.groupAdmin == uid) 'groupAdmin': admins.first,
         },
       }),
-      'This group\'s membership is locked on the server. Ask an NLTC admin to '
-          'update the chat rules.',
+      'Only an admin can change who is in this group.',
     );
   }
 
@@ -712,14 +857,15 @@ class ChatRepository {
 
     await _guarded(
       () => _chat(chatId).update({
-        'members': members,
+        // See [removeMember]: the rules check the resulting list, so the
+        // server has to do the removing.
+        'members': FieldValue.arrayRemove([uid]),
         if (chat.isAdmin(uid)) ...{
           'groupAdmins': admins.isNotEmpty ? admins : [?successor],
           'groupAdmin': ?successor,
         },
       }),
-      'This group\'s membership is locked on the server. Ask an NLTC admin to '
-          'update the chat rules.',
+      'Only an admin can change who is in this group.',
     );
   }
 
@@ -765,6 +911,101 @@ class ChatRepository {
 
     _directory = contacts;
     return contacts;
+  }
+
+  /// How many document ids one `whereIn` query will take.
+  static const _idBatch = 30;
+
+  List<ChatContact>? _messaged;
+
+  /// The people this student may put in a group: everyone they have an open
+  /// direct message with.
+  ///
+  /// Not the directory. A group invitation reaches somebody who never asked for
+  /// it, and in August 2026 that was being used to pull whole classes into
+  /// groups they had nothing to do with. Requiring a conversation first means
+  /// the person doing the inviting has already been let through once, by the
+  /// person being invited — a DM request they accepted. Declining a request
+  /// therefore closes the group route too, which is the reading of "no" that
+  /// anyone declining would expect.
+  ///
+  /// A pending request does not count. That is somebody who has been asked and
+  /// has not said yes.
+  ///
+  /// Read straight from the chat collection rather than from a cached contact
+  /// list, because it has to be *this student's* conversations and nothing
+  /// else; the result is held for the session, since a picker is opened and
+  /// closed repeatedly while building one group.
+  Future<List<ChatContact>> messagedContacts(
+    String myUid, {
+    bool refresh = false,
+  }) async {
+    final cached = _messaged;
+    if (cached != null && !refresh) return cached;
+
+    final snap = await _chats.where('members', arrayContains: myUid).get();
+    final uids = <String>{
+      for (final doc in snap.docs)
+        if (Chat.fromMap(doc.id, doc.data()) case final chat
+            when !chat.isGroup &&
+                chat.requestStatus == ChatRequestStatus.accepted)
+          ...chat.othersThan(myUid),
+    }..remove(myUid);
+
+    final contacts = await _usersByUid(uids);
+    contacts.sort(ChatContact.compare);
+    _messaged = contacts;
+    return contacts;
+  }
+
+  /// [messagedContacts] narrowed to whoever answers to [query].
+  ///
+  /// Filtered here rather than on the server: the list is one student's
+  /// conversations, which is small, and the point of the search box in a
+  /// contacts-only picker is to find someone in a list they can already see.
+  Future<List<ChatContact>> searchMessagedContacts(
+    String myUid,
+    String query,
+  ) async {
+    final contacts = await messagedContacts(myUid);
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) return contacts;
+    return [
+      for (final contact in contacts)
+        if (contact.matches(needle)) contact,
+    ];
+  }
+
+  /// Drops the cached contact list, so the next picker sees a conversation
+  /// accepted since the app started.
+  void forgetMessagedContacts() => _messaged = null;
+
+  /// Reads exactly these people's user documents.
+  ///
+  /// `whereIn` takes thirty ids at a time, so this runs in chunks; a student's
+  /// contact list is small enough that it is nearly always one query.
+  Future<List<ChatContact>> _usersByUid(Set<String> uids) async {
+    if (uids.isEmpty) return [];
+
+    final ids = uids.toList();
+    final chunks = <List<String>>[
+      for (var i = 0; i < ids.length; i += _idBatch)
+        ids.sublist(i, i + _idBatch > ids.length ? ids.length : i + _idBatch),
+    ];
+
+    final snapshots = await Future.wait(
+      chunks.map(
+        (chunk) => _db
+            .collection('users')
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get(),
+      ),
+    );
+
+    return [
+      for (final snap in snapshots)
+        for (final doc in snap.docs) ChatContact.fromMap(doc.id, doc.data()),
+    ];
   }
 
   /// One person's card, kept live for as long as anyone is looking at it.
