@@ -17,6 +17,7 @@ import '../core/widgets/skeleton.dart';
 import '../core/widgets/in_app_browser.dart';
 import '../core/widgets/subject_grid.dart';
 import '../practice/exam_setup_sheet.dart';
+import 'widgets/note_document.dart';
 import 'widgets/note_html.dart';
 import '../shell/dashboard_sidebar.dart' show DashboardSidebar;
 
@@ -416,6 +417,14 @@ class _NoteReader extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
+    // A note uploaded as a whole HTML file is a page, not a paragraph: it lays
+    // itself out, and it is long. It gets the screen and scrolls itself, with
+    // the test CTA parked below it — a page-height document nested inside this
+    // ListView would mean two scrolls fighting over one drag.
+    if (topic.hasNote && isNoteDocument(topic.note!.content)) {
+      return _documentReader(context);
+    }
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(Tokens.s4, 0, Tokens.s4, Tokens.s10),
       children: [
@@ -497,6 +506,89 @@ class _NoteReader extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// The reader for a note that is a whole HTML document.
+  ///
+  /// The note fills the screen because that is what it was written to do: a
+  /// Biology topic runs to several pages of headings, tables and labelled
+  /// diagrams, and a phone shows it the way the browser would rather than as a
+  /// tall card inside a scrolling list.
+  ///
+  /// What is left around it is only what the student cannot get from the page
+  /// itself — the way back, and the test on this topic.
+  Widget _documentReader(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Tokens.s4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _BackLink(label: subject.name, onTap: onBack),
+              PageHeader(title: topic.topic, subtitle: subject.name),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Tokens.s4),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(Tokens.rSm),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(Tokens.rSm),
+                  border: Border.all(
+                    color: Theme.of(context).brightness == Brightness.dark
+                        ? BlueprintPalette.b200.withValues(alpha: 0.25)
+                        : BlueprintPalette.b100,
+                  ),
+                ),
+                child: NoteDocumentView(html: topic.note!.content),
+              ),
+            ),
+          ),
+        ),
+        // Pinned rather than scrolled past: a student who has read to the bottom
+        // of a six-page note should not have to scroll a second surface to find
+        // the test, and one who hasn't should still see it is there.
+        Material(
+          color: scheme.surface,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                Tokens.s4,
+                Tokens.s3,
+                Tokens.s4,
+                Tokens.s3,
+              ),
+              child: Row(
+                children: [
+                  if (reader != null) ...[
+                    OutlinedButton.icon(
+                      onPressed: () => onOpenReader(reader),
+                      icon: const Icon(Icons.auto_awesome_mosaic_rounded, size: 16),
+                      label: const Text('Illustrated'),
+                    ),
+                    const SizedBox(width: Tokens.s2),
+                  ],
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: onTakeTest,
+                      icon: const Icon(Icons.edit_rounded, size: 17),
+                      label: const Text('Take a Test on This Topic'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ],
