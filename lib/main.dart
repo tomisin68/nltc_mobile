@@ -30,6 +30,7 @@ import 'data/services/firestore_cache.dart';
 import 'data/services/link_preview_service.dart';
 import 'data/services/local_database.dart';
 import 'data/services/mission_signals.dart';
+import 'data/services/notes_reader.dart';
 import 'data/services/prefs_service.dart';
 import 'data/services/push_service.dart';
 import 'firebase_options.dart';
@@ -169,6 +170,7 @@ class NltcApp extends StatelessWidget {
         Provider<StudyNoteRepository>(
           create: (context) => StudyNoteRepository(cache: context.read()),
         ),
+        Provider<NotesReaderService>(create: (_) => NotesReaderService()),
         Provider<AttemptRepository>(
           create: (context) => AttemptRepository(
             api: context.read(),
