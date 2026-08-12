@@ -82,6 +82,11 @@ dependencies:
   # share sheet — WhatsApp is how a Nigerian student actually passes something
   # on, and it is already in that sheet.
   share_plus: ^12.0.0
+  # A circle-theorem question *is* its figure, and the bank draws those as
+  # inline SVG inside the question text. `HtmlWidget` renders markup, not
+  # vectors: left to it an `<svg>` contributes nothing but its stray labels, so
+  # `question_math.dart` hands the element here to be drawn.
+  flutter_svg: ^2.3.0
 
 dev_dependencies:
   flutter_test:

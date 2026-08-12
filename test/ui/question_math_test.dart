@@ -221,4 +221,84 @@ void main() {
       expect(QuestionMath.hasNotation(radical), isTrue);
     });
   });
+
+  /* ── Figures ─────────────────────────────────────────────────────────────
+     The bug these guard against was total and silent: `<svg>` was not on the
+     website's sanitiser allowlist, so every diagram in the bank was deleted on
+     import and again on render, and a circle-theorem question reached the exam
+     hall as prose about a figure that was not there. On this side `HtmlWidget`
+     draws no vectors at all, so even a diagram that survived would have arrived
+     as a scatter of its own axis labels. */
+  group('a figure', () {
+    const circle =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="220" height="160" '
+        'viewBox="0 0 220 160">'
+        '<circle cx="110" cy="80" r="70" fill="none" stroke="#000" stroke-width="2"></circle>'
+        '<line x1="40" y1="80" x2="180" y2="80" stroke="#000" stroke-width="2"></line>'
+        '<text x="106" y="76" font-size="11">O</text></svg>';
+
+    testWidgets('is drawn, at the size it was authored', (tester) async {
+      await show(tester, 'In the diagram, O is the centre. Find angle x. $circle');
+
+      final figure = find.byKey(figureKey);
+      expect(figure, findsOneWidget);
+
+      // Geometry, not construction: a figure laid out to nothing is still a
+      // widget that builds without complaint, and is exactly what a student
+      // would report as "the diagram is missing".
+      final size = tester.getSize(figure);
+      expect(size.width, greaterThan(100));
+      expect(size.height, greaterThan(80));
+    });
+
+    testWidgets('keeps a light surface under it on the dark exam screen', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: RichQuestionText(
+                html: circle,
+                style: const TextStyle(fontSize: 16, color: Colors.white),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // `stroke="#000"` on a dark card is an invisible drawing. The figure
+      // carries the white page it was drawn for.
+      final box = tester.widget<Container>(find.byKey(figureKey));
+      expect((box.decoration as BoxDecoration).color, Colors.white);
+    });
+
+    testWidgets('a figure wider than the phone is scaled down, not cropped', (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await show(
+        tester,
+        '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="450" '
+        'viewBox="0 0 900 450"><rect x="0" y="0" width="900" height="450" '
+        'fill="none" stroke="#000"></rect></svg>',
+      );
+
+      final size = tester.getSize(find.byKey(figureKey));
+      expect(size.width, lessThanOrEqualTo(360));
+      // Scaled by its own ratio rather than squashed: 900×450 is 2:1, and the
+      // 6px of padding on each side is the surface, not the drawing.
+      expect(size.height - 12, closeTo((size.width - 12) / 2, 1));
+    });
+
+    testWidgets('its labels are drawn into it, not spilled into the sentence', (tester) async {
+      await show(tester, 'Find angle x. $circle');
+
+      expect(find.textContaining('Find angle x', findRichText: true), findsOneWidget);
+      // "O" is a label inside the drawing. Before this, `HtmlWidget` walked
+      // into the `<svg>` and set it as a word in the question.
+      expect(find.textContaining('O', findRichText: true), findsNothing);
+    });
+  });
 }

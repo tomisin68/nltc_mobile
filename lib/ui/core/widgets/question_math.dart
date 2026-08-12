@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'package:html/dom.dart' as dom;
 
-/// Mathematical notation inside a question.
+/// Mathematical notation, and figures, inside a question.
 ///
 /// A maths paper is not plain text and not MathML. The bank draws its notation
 /// with inline CSS, because that is what renders identically in a browser, in
@@ -25,6 +26,14 @@ import 'package:html/dom.dart' as dom;
 /// else is left to `HtmlWidget`, which handles `<sub>`, `<sup>` and the rest
 /// perfectly well.
 ///
+/// A **figure** is the fourth. A circle-theorem, bar-chart or bearing question
+/// *is* its drawing — "find angle x" means nothing without the circle and the
+/// labelled centre — and the bank writes those as inline SVG inside the
+/// question text, because an SVG is text: it survives the line-based upload
+/// format and needs no hosting. `HtmlWidget` renders markup, not vectors, so an
+/// `<svg>` left to it contributes nothing but its stray `<text>` labels. It is
+/// intercepted here and drawn with `flutter_svg`.
+///
 /// Borders are drawn in the current text colour rather than the `#000` the
 /// markup asks for: the exam hall has a dark theme, and a black bar on a dark
 /// navy card is an invisible bar. The web stylesheet overrides the same way.
@@ -45,6 +54,7 @@ class QuestionMath {
         _MathKind.fraction => _Fraction(element: element, style: style),
         _MathKind.matrix => _Matrix(element: element, style: style),
         _MathKind.overline => _Overline(element: element, style: style),
+        _MathKind.figure => _Figure(element: element),
       },
     );
   }
@@ -67,12 +77,18 @@ class QuestionMath {
 const fractionBarKey = Key('question-math-fraction-bar');
 const matrixKey = Key('question-math-matrix');
 const overlineKey = Key('question-math-overline');
+const figureKey = Key('question-math-figure');
 
-enum _MathKind { fraction, matrix, overline }
+enum _MathKind { fraction, matrix, overline, figure }
 
 _MathKind? _kindOf(dom.Element element) {
   final style = element.attributes['style'] ?? '';
   switch (element.localName) {
+    // A figure needs no inspection: an `<svg>` in a question is always one, and
+    // `HtmlWidget` would otherwise walk into it and render its `<text>` labels
+    // as loose words where the drawing should be.
+    case 'svg':
+      return _MathKind.figure;
     case 'table':
       // Brackets down both sides is a matrix; a bar under the top cell is a
       // fraction. Checked in that order because a matrix cell may itself hold a
@@ -244,6 +260,90 @@ class _Matrix extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A drawing inside a question: a circle theorem, a bar chart, a solid.
+///
+/// Two things it has to get right that a plain `SvgPicture` would not.
+///
+/// **Colour.** The bank draws for paper — `stroke="#000"` on white, and white
+/// labels on coloured pie sectors. The exam screen is dark, where the strokes
+/// disappear and the labels do not, so inverting would rescue the strokes and
+/// lose the labels. The figure therefore keeps the light surface it was drawn
+/// against, in both themes, and reads exactly like the past paper it came from.
+/// The web stylesheet does the same.
+///
+/// **Size.** A figure is authored at whatever size suited the page, which may
+/// be wider than a phone. It is drawn at its own size when it fits and scaled
+/// down by its aspect ratio when it does not — never stretched up, because a
+/// small figure blown across the screen is as unreadable as a clipped one.
+class _Figure extends StatelessWidget {
+  const _Figure({required this.element});
+
+  final dom.Element element;
+
+  /// The card's padding, the option row's letter bubble, and the surface's own
+  /// margin. Measured off the screen rather than the constraints because a
+  /// `LayoutBuilder` inside an inline span cannot answer an intrinsic-width
+  /// query, and a fraction's cell asks for one.
+  static const _chrome = 96.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final room = MediaQuery.sizeOf(context).width - _chrome;
+    final drawn = _size(element, room);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Container(
+        key: figureKey,
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: SvgPicture.string(
+          element.outerHtml,
+          width: drawn.width,
+          height: drawn.height,
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+}
+
+/// The size to draw [element] at, given the [room] available.
+///
+/// `width`/`height` are the authored size and the `viewBox` is the fallback —
+/// a figure with neither cannot be measured, so it takes the width it is
+/// offered at the 3:2 the bank's diagrams are drawn to.
+Size _size(dom.Element element, double room) {
+  final width = _lengthOf(element.attributes['width']);
+  final height = _lengthOf(element.attributes['height']);
+  final box = (element.attributes['viewBox'] ?? element.attributes['viewbox'] ?? '')
+      .trim()
+      .split(RegExp(r'[\s,]+'))
+      .map(double.tryParse)
+      .toList();
+
+  final natural = (width != null && height != null)
+      ? Size(width, height)
+      : (box.length == 4 && box[2] != null && box[3] != null && box[2]! > 0 && box[3]! > 0)
+          ? Size(box[2]!, box[3]!)
+          : Size(room, room * 2 / 3);
+
+  final safeRoom = room > 40 ? room : 40.0;
+  if (natural.width <= safeRoom) return natural;
+  return Size(safeRoom, safeRoom * natural.height / natural.width);
+}
+
+/// `"200"`, `"200px"` and `"200.5"` are all 200-odd pixels; `"100%"` is not a
+/// measurement this can use, and falls through to the `viewBox`.
+double? _lengthOf(String? raw) {
+  if (raw == null || raw.contains('%')) return null;
+  final value = double.tryParse(raw.replaceAll(RegExp(r'[^0-9.\-]'), ''));
+  return (value != null && value > 0) ? value : null;
 }
 
 /// The radicand under a surd — a rule stretched across whatever it contains,

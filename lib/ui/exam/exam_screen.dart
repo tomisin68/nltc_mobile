@@ -765,8 +765,11 @@ class _Explanation extends StatelessWidget {
           ),
           if (explanation != null && explanation.isNotEmpty) ...[
             const SizedBox(height: Tokens.s2),
-            Text(
-              explanation,
+            // An explanation is markup, like the stem and the options: it works
+            // a fraction, and it often re-draws the figure the question asked
+            // about. As plain text it showed the student the tags.
+            RichQuestionText(
+              html: explanation,
               style: text.bodyMedium?.copyWith(color: onTone),
             ),
           ],

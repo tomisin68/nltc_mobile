@@ -15,6 +15,7 @@ import '../core/widgets/anti_cheat_warning.dart';
 import '../core/widgets/app_card.dart';
 import '../core/widgets/empty_state.dart';
 import '../core/widgets/page_header.dart';
+import '../core/widgets/question_body.dart';
 import '../core/widgets/skeleton.dart';
 
 /// Quick Tests — short published sets, answered inline.
@@ -356,8 +357,11 @@ class _QuestionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Q${index + 1}. ${question.question}',
+          // Quick tests come through the same HTML importer as the main bank,
+          // so a question here carries the same indices, fractions and figures
+          // — and as plain text it showed the student the tags instead.
+          RichQuestionText(
+            html: 'Q${index + 1}. ${question.question}',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,
@@ -412,8 +416,8 @@ class _QuestionCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 5),
-                  Text(
-                    question.explanation!,
+                  RichQuestionText(
+                    html: question.explanation!,
                     style: TextStyle(
                       fontSize: 13,
                       height: 1.6,
@@ -515,8 +519,8 @@ class _OptionTile extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  text,
+                child: RichQuestionText(
+                  html: text,
                   style: TextStyle(
                     fontSize: 13.5,
                     height: 1.45,
