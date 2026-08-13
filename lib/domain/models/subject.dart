@@ -243,13 +243,18 @@ abstract final class Subjects {
   };
 
   /// `decorateSubjects` — pairs each name with its icon and colour.
-  static List<Subject> decorate(Iterable<String> names) => names.map((name) {
-        final decor = _decor[name];
-        return Subject(
-          key: decor?.key ?? slugify(name),
-          name: name,
-          icon: decor?.icon ?? _fallbackIcon,
-          color: decor?.color ?? _fallbackColor,
-        );
-      }).toList(growable: false);
+  static List<Subject> decorate(Iterable<String> names) =>
+      names.map(one).toList(growable: false);
+
+  /// One subject's decoration — for the screens that render a subject at a time
+  /// rather than a grid of them, such as the weekly timetable.
+  static Subject one(String name) {
+    final decor = _decor[name];
+    return Subject(
+      key: decor?.key ?? slugify(name),
+      name: name,
+      icon: decor?.icon ?? _fallbackIcon,
+      color: decor?.color ?? _fallbackColor,
+    );
+  }
 }

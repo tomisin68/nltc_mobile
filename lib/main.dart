@@ -21,6 +21,7 @@ import 'data/repositories/question_report_repository.dart';
 import 'data/repositories/question_repository.dart';
 import 'data/repositories/schedule_repository.dart';
 import 'data/repositories/study_note_repository.dart';
+import 'data/repositories/study_plan_repository.dart';
 import 'data/repositories/subject_repository.dart';
 import 'data/repositories/support_repository.dart';
 import 'data/repositories/video_repository.dart';
@@ -166,6 +167,9 @@ class NltcApp extends StatelessWidget {
         Provider<SupportRepository>(create: (_) => SupportRepository()),
         Provider<ExamResultRepository>(
           create: (context) => ExamResultRepository(cache: context.read()),
+        ),
+        Provider<StudyPlanRepository>(
+          create: (context) => StudyPlanRepository(api: context.read()),
         ),
         Provider<StudyNoteRepository>(
           create: (context) => StudyNoteRepository(cache: context.read()),

@@ -51,9 +51,15 @@ class DashboardController extends ChangeNotifier {
   /// Read once by ChatView, then cleared.
   String? _pendingChatId;
 
+  /// Set when the weekly timetable sent the student to a particular topic.
+  /// Read once by StudyNotesScreen, then cleared.
+  ({String subject, String topic})? _pendingNote;
+
   DashboardView get view => _view;
 
   String? get pendingChatId => _pendingChatId;
+
+  ({String subject, String topic})? get pendingNote => _pendingNote;
 
   /// Bumped each time a stateful view is navigated to — see [_statefulViews].
   int visitCount(DashboardView view) => _visitCounts[view] ?? 0;
@@ -77,6 +83,18 @@ class DashboardController extends ChangeNotifier {
   }
 
   void consumePendingChatId() => _pendingChatId = null;
+
+  /// Opens Study Notes straight on one topic — what the timetable's "Study
+  /// notes" button does. Without it the student lands on the subject grid and
+  /// has to go and find the topic the timetable just told them to read, which is
+  /// the one thing the timetable exists to save them.
+  void openNote({required String subject, required String topic}) {
+    _pendingNote = (subject: subject, topic: topic);
+    _view = DashboardView.notes;
+    notifyListeners();
+  }
+
+  void consumePendingNote() => _pendingNote = null;
 
   /// Back to the dashboard, with visit counters cleared — used after signing out
   /// and back in, so the next student on a shared phone starts fresh.

@@ -7,6 +7,7 @@ import '../../data/services/mission_signals.dart';
 import '../../data/services/notes_reader.dart';
 import '../../domain/models/study_note.dart';
 import '../../domain/models/subject.dart';
+import '../core/state/dashboard_controller.dart';
 import '../core/state/practice_controller.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
@@ -64,6 +65,42 @@ class _StudyNotesScreenState extends State<StudyNotesScreen> {
         await context.read<SubjectRepository>().decorated(_category);
     if (!mounted) return;
     setState(() => _subjects = subjects);
+    await _followTimetable(subjects);
+  }
+
+  /// Arriving from the weekly timetable: open the subject and topic it named.
+  ///
+  /// Consumed on the way in so it fires once — otherwise pressing Back to the
+  /// topic list would immediately reopen the note the student just left.
+  Future<void> _followTimetable(List<Subject> subjects) async {
+    final wanted = context.read<DashboardController>().pendingNote;
+    if (wanted == null) return;
+    context.read<DashboardController>().consumePendingNote();
+
+    Subject? subject;
+    for (final s in subjects) {
+      if (s.name == wanted.subject) {
+        subject = s;
+        break;
+      }
+    }
+    if (subject == null) return;
+
+    await _openSubject(subject);
+    if (!mounted) return;
+
+    // Matched case-insensitively: the timetable carries the title as the note
+    // stored it, and this list may have taken its spelling from the question
+    // bank instead.
+    final key = wanted.topic.trim().toLowerCase();
+    for (final topic in _topics) {
+      if (topic.topic.trim().toLowerCase() == key) {
+        _openTopic(topic);
+        return;
+      }
+    }
+    // Renamed or removed since the week was built — leave them on the topic
+    // list rather than on an error.
   }
 
   Future<void> _openSubject(Subject subject) async {

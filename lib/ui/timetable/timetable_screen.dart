@@ -1,30 +1,27 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-import '../../data/repositories/live_repository.dart';
-import '../../data/services/mission_signals.dart';
-import '../../domain/models/live_session.dart';
+import '../../data/repositories/study_plan_repository.dart';
+import '../../domain/models/subject.dart';
+import '../../domain/study_plan.dart';
 import '../core/state/dashboard_controller.dart';
 import '../core/state/session_controller.dart';
-import '../core/state/xp_service.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
 import '../core/widgets/empty_state.dart';
 import '../core/widgets/page_header.dart';
 import '../core/widgets/skeleton.dart';
-import '../live/livestream_screen.dart';
 
-/// The week, laid out as a page of the student's timetable.
+/// The weekly study timetable.
 ///
-/// The live hall answers "what can I join?" and so is sorted newest-first, with
-/// whatever is on air pulled to the top. This answers the different question of
-/// "when is my week?" — every class on the day it falls, in the order the days
-/// run, including the days with nothing on them. A free Thursday is information
-/// a student plans around, so an empty day is drawn rather than skipped.
+/// A student picks four to seven subjects once. Every Monday the week is laid
+/// out again from those subjects — one topic a day, each opening its study note,
+/// and no topic coming round twice until the whole subject has been covered.
+///
+/// The rules deciding what lands on which day live in `domain/study_plan.dart`,
+/// not here: the website runs the identical algorithm and the two must agree.
 class TimetableScreen extends StatefulWidget {
   const TimetableScreen({super.key});
 
@@ -33,208 +30,547 @@ class TimetableScreen extends StatefulWidget {
 }
 
 class _TimetableScreenState extends State<TimetableScreen> {
-  StreamSubscription<List<LiveSession>>? _subscription;
-  List<LiveSession>? _sessions;
+  Map<String, List<PlanTopic>>? _syllabus;
+  StudyPlan? _plan;
+  bool _loading = true;
+  bool _saving = false;
 
-  /// Weeks away from the one containing today. 0 is this week.
-  int _weekOffset = 0;
+  /// Open when the student has no plan yet, or asked to change their subjects.
+  bool _picking = false;
 
-  /// Keeps "in 2h" and the today marker honest without a Firestore write.
-  Timer? _ticker;
+  /// The picker's working selection. Seeded from the saved plan when the student
+  /// reopens it, and left empty for someone choosing for the first time.
+  Set<String> _draft = {};
+
+  SubjectCategory get _category =>
+      (context.read<SessionController>().profile?.isJunior ?? false)
+          ? SubjectCategory.junior
+          : SubjectCategory.senior;
 
   @override
   void initState() {
     super.initState();
-    final isJunior =
-        context.read<SessionController>().profile?.isJunior ?? false;
-    _subscription = context
-        .read<LiveRepository>()
-        .watchTimetable(isJunior: isJunior)
-        .listen(
-          (sessions) => setState(() => _sessions = sessions),
-          onError: (_) => setState(() => _sessions = const []),
-        );
-    _ticker = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => setState(() {}),
-    );
+    _load();
   }
 
-  @override
-  void dispose() {
-    _subscription?.cancel();
-    _ticker?.cancel();
-    super.dispose();
-  }
+  Future<void> _load() async {
+    final repo = context.read<StudyPlanRepository>();
+    final uid = context.read<SessionController>().account?.uid ?? '';
+    final category = _category.wireName;
 
-  /// The Monday of the week [offset] weeks from today.
-  ///
-  /// Built by day arithmetic on the calendar fields rather than by adding a
-  /// `Duration`, so a week that straddles a month or year boundary still lands
-  /// on the right date.
-  static DateTime _weekStart(int offset) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    return DateTime(
-      today.year,
-      today.month,
-      today.day - (today.weekday - DateTime.monday) + offset * 7,
-    );
-  }
-
-  static bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-
-  /// Jumps to whichever week holds [date].
-  void _goToWeekOf(DateTime date) {
-    final thisMonday = _weekStart(0);
-    final thatMonday = DateTime(
-      date.year,
-      date.month,
-      date.day - (date.weekday - DateTime.monday),
-    );
-    // Rounded, not truncated: `inDays` floors, and an hour of drift either side
-    // of a week boundary would otherwise land the student a week off.
-    final weeks = (thatMonday.difference(thisMonday).inHours / 168).round();
-    setState(() => _weekOffset = weeks);
-  }
-
-  Future<void> _join(LiveSession session) async {
-    final controller = context.read<SessionController>();
-    // Re-read on the tap: the row can sit on screen across the access boundary,
-    // and a sub-second stale render must not buy a session.
-    if (!controller.access.active) {
-      showToast('Upgrade to Pro to join live classes');
-      context.read<DashboardController>().select(DashboardView.settings);
-      return;
+    Map<String, List<PlanTopic>> syllabus;
+    try {
+      syllabus = await repo.syllabus(category);
+    } catch (_) {
+      syllabus = const {};
     }
-    if (session.channel.isEmpty) {
-      showToast(
-        'This class has no room set up yet — ask your tutor.',
-        variant: ToastVariant.error,
-      );
-      return;
-    }
-
-    unawaited(
-      context
-          .read<XpService>()
-          .award('join_live', meta: {'sessionId': session.id}),
-    );
-    await context.read<MissionSignals>().set('join_live', controller.account?.uid);
+    final plan = await repo.mine(uid);
     if (!mounted) return;
 
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => LivestreamScreen(sessionId: session.id),
-      ),
-    );
+    setState(() {
+      _syllabus = syllabus;
+      _plan = plan;
+      _loading = false;
+      _draft = plan.subjects.toSet();
+    });
+
+    await _regenerateIfStale();
   }
+
+  /// The Monday rebuild.
+  ///
+  /// Whichever surface the student opens first that week rebuilds the plan and
+  /// writes it; the other reads it back. Because [buildWeek] is a pure function
+  /// of the same inputs on both, it does not matter which one gets there first.
+  Future<void> _regenerateIfStale() async {
+    final plan = _plan;
+    final syllabus = _syllabus;
+    if (plan == null || syllabus == null || !plan.hasSubjects) return;
+
+    final week = weekKey();
+    if (!plan.isStale(week)) return;
+
+    await _persist(plan.copyWith(
+      weekOf: week,
+      slots: buildWeek(
+        subjects: plan.subjects,
+        topicsBySubject: syllabus,
+        covered: plan.covered,
+        weekStartKey: week,
+      ),
+    ));
+  }
+
+  Future<void> _persist(StudyPlan next) async {
+    if (!mounted) return;
+    final uid = context.read<SessionController>().account?.uid ?? '';
+    if (uid.isEmpty) return;
+    setState(() => _plan = next);
+    try {
+      await context
+          .read<StudyPlanRepository>()
+          .save(uid, next, category: _category.wireName);
+    } catch (_) {
+      if (mounted) {
+        showToast('Could not save your timetable', variant: ToastVariant.error);
+      }
+    }
+  }
+
+  Future<void> _confirmSelection() async {
+    final problem = validateSelection(_draft.toList());
+    if (problem != null) {
+      showToast(problem, variant: ToastVariant.error);
+      return;
+    }
+
+    setState(() => _saving = true);
+    final week = weekKey();
+    final subjects = _draft.toList()..sort();
+    final covered = _plan?.covered ?? <String>{};
+
+    await _persist(StudyPlan(
+      subjects: subjects,
+      weekOf: week,
+      slots: buildWeek(
+        subjects: subjects,
+        topicsBySubject: _syllabus ?? const {},
+        // Coverage for a dropped subject is kept rather than wiped: a student
+        // who drops Chemistry this term and takes it up again next term should
+        // not be made to study its first twenty topics over.
+        covered: covered,
+        weekStartKey: week,
+      ),
+      covered: covered,
+    ));
+
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      _picking = false;
+    });
+    showToast('Timetable built from ${subjects.length} subjects');
+  }
+
+  Future<void> _toggleCovered(PlanSlot slot) async {
+    final plan = _plan;
+    if (plan == null || slot.subject == null || slot.topic == null) return;
+
+    final key = coverKey(slot.subject!, slot.topic!);
+    final covered = {...plan.covered};
+    final wasDone = covered.contains(key);
+    if (wasDone) {
+      covered.remove(key);
+    } else {
+      covered.add(key);
+    }
+
+    /* Ticking a day off does not re-cut the week — the remaining days stay put,
+       so a student never watches tomorrow change under them for finishing
+       today. The new coverage is picked up by next Monday's build. */
+    await _persist(plan.copyWith(covered: covered));
+    if (!wasDone && mounted) showToast('Topic marked as studied');
+  }
+
+  /// Opens the study notes for a day's topic.
+  ///
+  /// Opening the note is the honest signal that the topic was studied, so the
+  /// journey advances on the action rather than on a checkbox the student has to
+  /// remember. The tick is still there to undo it.
+  Future<void> _study(PlanSlot slot) async {
+    final plan = _plan;
+    if (plan == null || slot.subject == null || slot.topic == null) return;
+
+    final key = coverKey(slot.subject!, slot.topic!);
+    if (!plan.covered.contains(key)) {
+      await _persist(plan.copyWith(covered: {...plan.covered, key}));
+    }
+    if (!mounted) return;
+    context
+        .read<DashboardController>()
+        .openNote(subject: slot.subject!, topic: slot.topic!);
+  }
+
+  // ─── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final sessions = _sessions;
-
     const header = PageHeader(
       title: 'Timetable',
-      subtitle: 'Your week at a glance — every class your tutors have put on a '
-          'date, on the day it falls.',
+      subtitle: 'Your week of study, built from your subjects — one topic a '
+          'day, straight through the syllabus.',
     );
 
-    if (sessions == null) {
+    if (_loading) {
       return ListView(
         padding: const EdgeInsets.fromLTRB(Tokens.s4, 0, Tokens.s4, Tokens.s10),
         children: const [
           header,
           SkeletonListItem(lines: 2),
           SizedBox(height: Tokens.s3),
-          SkeletonListItem(lines: 3),
+          SkeletonListItem(lines: 2),
           SizedBox(height: Tokens.s3),
           SkeletonListItem(lines: 2),
         ],
       );
     }
 
-    final monday = _weekStart(_weekOffset);
-    final days = [
-      for (var i = 0; i < 7; i++)
-        DateTime(monday.year, monday.month, monday.day + i),
-    ];
-    final byDay = {
-      for (final day in days)
-        day: sessions.where((s) => _sameDay(s.slotAt!, day)).toList(),
-    };
-    final weekIsEmpty = byDay.values.every((list) => list.isEmpty);
+    final syllabus = _syllabus ?? const <String, List<PlanTopic>>{};
+    // Only subjects with notes written for them can be scheduled — a subject
+    // with nothing behind it would put empty days on the timetable.
+    final available = syllabus.keys
+        .where((s) => (syllabus[s] ?? const []).isNotEmpty)
+        .toList()
+      ..sort();
+
+    if (available.length < minPlanSubjects) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(Tokens.s4, 0, Tokens.s4, Tokens.s10),
+        children: [
+          header,
+          EmptyState(
+            icon: Icons.menu_book_rounded,
+            title: 'Not enough study notes yet',
+            message: 'A timetable needs at least $minPlanSubjects subjects with '
+                'notes written for them. '
+                '${available.length == 1 ? 'One subject has' : '${available.length} subjects have'} '
+                'notes so far — check back once your tutors have uploaded more.',
+          ),
+        ],
+      );
+    }
+
+    final plan = _plan ?? StudyPlan.empty;
+    if (!plan.hasSubjects || _picking) {
+      return _SubjectPicker(
+        header: header,
+        available: available,
+        syllabus: syllabus,
+        draft: _draft,
+        saving: _saving,
+        returning: plan.hasSubjects,
+        onToggle: (name) => setState(() {
+          if (_draft.contains(name)) {
+            _draft.remove(name);
+          } else if (_draft.length < maxPlanSubjects) {
+            _draft.add(name);
+          } else {
+            showToast('That is the most you can take — $maxPlanSubjects '
+                'subjects, one for each day.');
+          }
+        }),
+        onConfirm: _confirmSelection,
+        onCancel: plan.hasSubjects
+            ? () => setState(() {
+                  _picking = false;
+                  _draft = plan.subjects.toSet();
+                })
+            : null,
+      );
+    }
+
+    final week = weekKey();
+    final progress = planProgress(plan.subjects, syllabus, plan.covered);
+    final todayIndex = DateTime.now().weekday - DateTime.monday;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(Tokens.s4, 0, Tokens.s4, Tokens.s10),
       children: [
         header,
         _WeekBar(
-          monday: monday,
-          offset: _weekOffset,
-          onPrevious: () => setState(() => _weekOffset--),
-          onNext: () => setState(() => _weekOffset++),
-          onToday: _weekOffset == 0 ? null : () => setState(() => _weekOffset = 0),
+          week: week,
+          onChangeSubjects: () => setState(() {
+            _picking = true;
+            _draft = plan.subjects.toSet();
+          }),
         ),
         const SizedBox(height: Tokens.s4),
-        if (weekIsEmpty)
-          _EmptyWeek(
-            sessions: sessions,
-            monday: monday,
-            onJump: _goToWeekOf,
-          )
-        else
-          for (final day in days)
-            _DayBlock(
-              day: day,
-              classes: byDay[day] ?? const [],
-              isToday: _sameDay(day, DateTime.now()),
-              onJoin: _join,
-            ),
+        if (progress.complete) ...[
+          _DoneBanner(subjects: plan.subjects.length, topics: progress.total),
+          const SizedBox(height: Tokens.s4),
+        ],
+        for (final slot in plan.slots)
+          _DayBlock(
+            slot: slot,
+            date: dayOfWeekKey(week, slot.day),
+            isToday: slot.day == todayIndex,
+            done: slot.subject != null &&
+                plan.covered.contains(coverKey(slot.subject!, slot.topic!)),
+            onToggle: () => _toggleCovered(slot),
+            onStudy: () => _study(slot),
+          ),
+        const SizedBox(height: Tokens.s4),
+        _ProgressPanel(progress: progress),
       ],
     );
   }
 }
 
-// ─── Week bar ────────────────────────────────────────────────────────────────
+// ─── Subject picker ──────────────────────────────────────────────────────────
 
-/// The pager: which week is on screen, and the arrows either side of it.
-class _WeekBar extends StatelessWidget {
-  const _WeekBar({
-    required this.monday,
-    required this.offset,
-    required this.onPrevious,
-    required this.onNext,
-    required this.onToday,
+class _SubjectPicker extends StatelessWidget {
+  const _SubjectPicker({
+    required this.header,
+    required this.available,
+    required this.syllabus,
+    required this.draft,
+    required this.saving,
+    required this.returning,
+    required this.onToggle,
+    required this.onConfirm,
+    required this.onCancel,
   });
 
-  final DateTime monday;
-  final int offset;
-  final VoidCallback onPrevious;
-  final VoidCallback onNext;
-
-  /// Null on the current week — there is nowhere for "Today" to go.
-  final VoidCallback? onToday;
+  final Widget header;
+  final List<String> available;
+  final Map<String, List<PlanTopic>> syllabus;
+  final Set<String> draft;
+  final bool saving;
+  final bool returning;
+  final void Function(String) onToggle;
+  final VoidCallback onConfirm;
+  final VoidCallback? onCancel;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final sunday = DateTime(monday.year, monday.month, monday.day + 6);
+    final enough = draft.length >= minPlanSubjects && draft.length <= maxPlanSubjects;
+    final atMax = draft.length >= maxPlanSubjects;
 
-    // Named while the name still means something. Past "next week" a student is
-    // navigating by date, and a date is what helps them.
-    final label = switch (offset) {
-      0 => 'This week',
-      1 => 'Next week',
-      -1 => 'Last week',
-      _ => monday.month == sunday.month
-          ? '${DateFormat('d').format(monday)} – ${DateFormat('d MMM').format(sunday)}'
-          : '${DateFormat('d MMM').format(monday)} – ${DateFormat('d MMM').format(sunday)}',
-    };
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(Tokens.s4, 0, Tokens.s4, Tokens.s4),
+            children: [
+              header,
+              Text(
+                returning ? 'Change your subjects' : 'Choose your subjects',
+                style: GoogleFonts.fraunces(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.3,
+                  color: scheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Pick between $minPlanSubjects and $maxPlanSubjects subjects and '
+                'we will build your week around them — a topic a day, in order, '
+                'with nothing repeated until you have been through the whole '
+                'subject.${returning ? ' What you have already covered is kept.' : ''}',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.5,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: Tokens.s4),
+              for (final name in available)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: Tokens.s2),
+                  child: _PickRow(
+                    name: name,
+                    topicCount: (syllabus[name] ?? const []).length,
+                    selected: draft.contains(name),
+                    dimmed: !draft.contains(name) && atMax,
+                    onTap: () => onToggle(name),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        _PickerBar(
+          count: draft.length,
+          enough: enough,
+          saving: saving,
+          onConfirm: onConfirm,
+          onCancel: onCancel,
+        ),
+      ],
+    );
+  }
+}
+
+class _PickRow extends StatelessWidget {
+  const _PickRow({
+    required this.name,
+    required this.topicCount,
+    required this.selected,
+    required this.dimmed,
+    required this.onTap,
+  });
+
+  final String name;
+  final int topicCount;
+  final bool selected;
+  final bool dimmed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final subject = Subjects.one(name);
+
+    return Opacity(
+      // Dimmed once seven are taken — still readable, clearly not takeable.
+      opacity: dimmed ? 0.5 : 1,
+      child: Material(
+        color: selected
+            ? scheme.primaryContainer.withValues(alpha: 0.35)
+            : scheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(Tokens.rMd),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(Tokens.rMd),
+          child: Container(
+            padding: const EdgeInsets.all(Tokens.s3),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(Tokens.rMd),
+              border: Border.all(
+                color: selected ? scheme.primary : scheme.outlineVariant,
+                width: selected ? 1.5 : 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: subject.color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(Tokens.rSm),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(subject.icon, size: 16, color: subject.color),
+                ),
+                const SizedBox(width: Tokens.s3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                      Text(
+                        '$topicCount topics',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: selected ? scheme.primary : Colors.transparent,
+                    border: Border.all(
+                      color: selected ? scheme.primary : scheme.outlineVariant,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: selected
+                      ? Icon(Icons.check_rounded, size: 14, color: scheme.onPrimary)
+                      : null,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The bar pinned under the picker: how many are chosen, and the way forward.
+class _PickerBar extends StatelessWidget {
+  const _PickerBar({
+    required this.count,
+    required this.enough,
+    required this.saving,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  final int count;
+  final bool enough;
+  final bool saving;
+  final VoidCallback onConfirm;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final short = minPlanSubjects - count;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: Tokens.s2, vertical: 4),
+      padding: const EdgeInsets.fromLTRB(Tokens.s4, Tokens.s3, Tokens.s4, Tokens.s4),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        border: Border(top: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                short > 0
+                    ? '$count of $maxPlanSubjects chosen — $short more to go'
+                    : '$count of $maxPlanSubjects chosen',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: enough ? scheme.primary : scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (onCancel != null) ...[
+              TextButton(
+                onPressed: saving ? null : onCancel,
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: Tokens.s2),
+            ],
+            FilledButton(
+              onPressed: enough && !saving ? onConfirm : null,
+              child: Text(saving ? 'Building…' : 'Build my timetable'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── The week ────────────────────────────────────────────────────────────────
+
+class _WeekBar extends StatelessWidget {
+  const _WeekBar({required this.week, required this.onChangeSubjects});
+
+  final String week;
+  final VoidCallback onChangeSubjects;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final from = dayOfWeekKey(week, 0);
+    final to = dayOfWeekKey(week, 6);
+    final format = DateFormat('d MMM');
+
+    return Container(
+      padding: const EdgeInsets.all(Tokens.s3),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(Tokens.rMd),
@@ -242,53 +578,30 @@ class _WeekBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          IconButton(
-            onPressed: onPrevious,
-            icon: const Icon(Icons.chevron_left_rounded),
-            tooltip: 'Previous week',
-            visualDensity: VisualDensity.compact,
-          ),
           Expanded(
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  label,
-                  textAlign: TextAlign.center,
+                  'This week',
                   style: GoogleFonts.fraunces(
                     fontSize: 15,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: -0.2,
                     color: scheme.onSurface,
                   ),
                 ),
-                // The dates stay on screen even when the label is a word, so
-                // "next week" is never ambiguous about which dates it means.
                 Text(
-                  '${DateFormat('d MMM').format(monday)} – '
-                  '${DateFormat('d MMM').format(sunday)}',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  '${format.format(from)} – ${format.format(to)} · rebuilds every Monday',
+                  style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
                 ),
               ],
             ),
           ),
-          if (onToday != null)
-            TextButton(
-              onPressed: onToday,
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: Tokens.s2),
-              ),
-              child: const Text('Today', style: TextStyle(fontSize: 12)),
-            ),
-          IconButton(
-            onPressed: onNext,
-            icon: const Icon(Icons.chevron_right_rounded),
-            tooltip: 'Next week',
-            visualDensity: VisualDensity.compact,
+          TextButton.icon(
+            onPressed: onChangeSubjects,
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.tune_rounded, size: 15),
+            label: const Text('Subjects', style: TextStyle(fontSize: 12)),
           ),
         ],
       ),
@@ -296,21 +609,73 @@ class _WeekBar extends StatelessWidget {
   }
 }
 
-// ─── A day ───────────────────────────────────────────────────────────────────
+class _DoneBanner extends StatelessWidget {
+  const _DoneBanner({required this.subjects, required this.topics});
 
-/// One day of the week, with whatever falls on it.
+  final int subjects;
+  final int topics;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.all(Tokens.s4),
+      decoration: BoxDecoration(
+        color: scheme.tertiaryContainer.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(Tokens.rMd),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.emoji_events_rounded, size: 22, color: scheme.tertiary),
+          const SizedBox(width: Tokens.s3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'You have covered every topic in all $subjects subjects.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$topics topics, start to finish. Add a subject to keep going.',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    height: 1.4,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One day of the week, with the topic it holds.
 class _DayBlock extends StatelessWidget {
   const _DayBlock({
-    required this.day,
-    required this.classes,
+    required this.slot,
+    required this.date,
     required this.isToday,
-    required this.onJoin,
+    required this.done,
+    required this.onToggle,
+    required this.onStudy,
   });
 
-  final DateTime day;
-  final List<LiveSession> classes;
+  final PlanSlot slot;
+  final DateTime date;
   final bool isToday;
-  final void Function(LiveSession) onJoin;
+  final bool done;
+  final VoidCallback onToggle;
+  final VoidCallback onStudy;
 
   @override
   Widget build(BuildContext context) {
@@ -338,7 +703,7 @@ class _DayBlock extends StatelessWidget {
                 child: Column(
                   children: [
                     Text(
-                      DateFormat('EEE').format(day).toUpperCase(),
+                      dayShort[slot.day].toUpperCase(),
                       style: TextStyle(
                         fontSize: 8.5,
                         fontWeight: FontWeight.w900,
@@ -349,21 +714,29 @@ class _DayBlock extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      DateFormat('d').format(day),
+                      '${date.day}',
                       style: GoogleFonts.fraunces(
                         fontSize: 15,
                         fontWeight: FontWeight.w900,
                         height: 1.1,
-                        color: isToday
-                            ? BlueprintPalette.white
-                            : scheme.onSurface,
+                        color:
+                            isToday ? BlueprintPalette.white : scheme.onSurface,
                       ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: Tokens.s3),
-              if (isToday)
+              Text(
+                dayNames[slot.day],
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              if (isToday) ...[
+                const SizedBox(width: Tokens.s2),
                 Text(
                   'TODAY',
                   style: TextStyle(
@@ -373,209 +746,310 @@ class _DayBlock extends StatelessWidget {
                     color: scheme.primary,
                   ),
                 ),
-              if (isToday) const SizedBox(width: Tokens.s2),
+              ],
+              const SizedBox(width: Tokens.s2),
               Expanded(child: Container(height: 1, color: scheme.outlineVariant)),
             ],
           ),
           const SizedBox(height: Tokens.s2),
-          if (classes.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 54, bottom: 2),
-              child: Text(
-                'No classes',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontStyle: FontStyle.italic,
-                  color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
-                ),
-              ),
-            )
-          else
-            for (final session in classes)
-              Padding(
-                padding: const EdgeInsets.only(left: 54, bottom: Tokens.s2),
-                child: _ClassRow(
-                  session: session,
-                  onJoin: () => onJoin(session),
-                ),
-              ),
+          Padding(
+            padding: const EdgeInsets.only(left: 54),
+            child: slot.rest
+                ? Row(
+                    children: [
+                      Icon(Icons.local_cafe_rounded,
+                          size: 14, color: scheme.onSurfaceVariant),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Nothing left to study — take the day.',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontStyle: FontStyle.italic,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : _SlotCard(
+                    slot: slot,
+                    done: done,
+                    onToggle: onToggle,
+                    onStudy: onStudy,
+                  ),
+          ),
         ],
       ),
     );
   }
 }
 
-/// One class on a day: when it runs, what it is, and the way in if it is on now.
-class _ClassRow extends StatelessWidget {
-  const _ClassRow({required this.session, required this.onJoin});
+class _SlotCard extends StatelessWidget {
+  const _SlotCard({
+    required this.slot,
+    required this.done,
+    required this.onToggle,
+    required this.onStudy,
+  });
 
-  final LiveSession session;
-  final VoidCallback onJoin;
+  final PlanSlot slot;
+  final bool done;
+  final VoidCallback onToggle;
+  final VoidCallback onStudy;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final slot = session.slotAt!;
-    final ended = session.hasEnded;
+    final subject = Subjects.one(slot.subject ?? '');
 
     return Opacity(
-      // A finished class stays on the page — it is what the week held — but it
-      // steps back so the eye lands on what is still to come.
-      opacity: ended ? 0.55 : 1,
+      // Studied: it stays on the page — it is what the week held — but steps
+      // back so the eye lands on what is still to do.
+      opacity: done ? 0.62 : 1,
       child: Container(
         padding: const EdgeInsets.all(Tokens.s3),
         decoration: BoxDecoration(
           color: scheme.surfaceContainerLowest,
           borderRadius: BorderRadius.circular(Tokens.rSm),
-          border: Border.all(
-            color: session.isLive
-                ? scheme.error.withValues(alpha: 0.35)
-                : scheme.outlineVariant,
-            width: session.isLive ? 1.5 : 1,
+          border: Border(
+            left: BorderSide(color: subject.color, width: 3),
+            top: BorderSide(color: scheme.outlineVariant),
+            right: BorderSide(color: scheme.outlineVariant),
+            bottom: BorderSide(color: scheme.outlineVariant),
           ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  DateFormat('h:mm a').format(slot),
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w900,
-                    color: session.isLive ? scheme.error : scheme.primary,
+                Semantics(
+                  label: done ? 'Mark as not studied' : 'Mark as studied',
+                  button: true,
+                  child: InkWell(
+                    onTap: onToggle,
+                    borderRadius: BorderRadius.circular(100),
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: done ? scheme.primary : Colors.transparent,
+                        border: Border.all(
+                          color: done ? scheme.primary : scheme.outlineVariant,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: done
+                          ? Icon(Icons.check_rounded,
+                              size: 15, color: scheme.onPrimary)
+                          : null,
+                    ),
                   ),
                 ),
-                const SizedBox(width: Tokens.s2),
-                if (session.isLive)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: scheme.error,
-                      borderRadius: BorderRadius.circular(100),
-                    ),
-                    child: const Text(
-                      'LIVE',
-                      style: TextStyle(
-                        fontSize: 8.5,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.6,
-                        color: Colors.white,
+                const SizedBox(width: Tokens.s3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(subject.icon, size: 11, color: subject.color),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              (slot.subject ?? '').toUpperCase(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.5,
+                                color: subject.color,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  )
-                else if (ended)
-                  Text(
-                    'Finished',
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w700,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  )
-                else if (slot.isAfter(DateTime.now()))
-                  Text(
-                    'in ${_countdown(slot.difference(DateTime.now()))}',
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                      const SizedBox(height: 3),
+                      Text(
+                        slot.topic ?? '',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          height: 1.35,
+                          color: scheme.onSurface,
+                          decoration: done ? TextDecoration.lineThrough : null,
+                        ),
+                      ),
+                    ],
                   ),
+                ),
               ],
             ),
-            const SizedBox(height: 3),
-            Text(
-              session.title,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                height: 1.3,
-                color: scheme.onSurface,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              [
-                if (session.subject != null) session.subject!,
-                if (session.hostName != null) session.hostName!,
-              ].join(' · '),
-              style: TextStyle(
-                fontSize: 11,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            if (session.isLive) ...[
-              const SizedBox(height: Tokens.s2),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: onJoin,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: scheme.error,
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                  ),
-                  icon: const Icon(Icons.play_arrow_rounded, size: 17),
-                  label: const Text('Join now'),
+            const SizedBox(height: Tokens.s3),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onStudy,
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 7),
                 ),
+                icon: const Icon(Icons.menu_book_rounded, size: 16),
+                label: const Text('Study notes'),
               ),
-            ],
+            ),
           ],
         ),
       ),
     );
   }
-
-  static String _countdown(Duration until) {
-    final minutes = until.inMinutes;
-    final hours = minutes ~/ 60;
-    if (hours > 0) return '${hours}h ${minutes % 60}m';
-    return '${minutes < 1 ? 1 : minutes}m';
-  }
 }
 
-// ─── Empty week ──────────────────────────────────────────────────────────────
+// ─── Progress ────────────────────────────────────────────────────────────────
 
-/// Shown instead of seven blank days.
-///
-/// Seven "No classes" rows say the same thing seven times. Worse, a student
-/// paging forward through a quiet stretch has no idea how far to keep tapping —
-/// so when there is a class further out, this offers the week it is in.
-class _EmptyWeek extends StatelessWidget {
-  const _EmptyWeek({
-    required this.sessions,
-    required this.monday,
-    required this.onJump,
-  });
+class _ProgressPanel extends StatelessWidget {
+  const _ProgressPanel({required this.progress});
 
-  final List<LiveSession> sessions;
-  final DateTime monday;
-  final void Function(DateTime) onJump;
+  final PlanProgress progress;
 
   @override
   Widget build(BuildContext context) {
-    final nextMonday = DateTime(monday.year, monday.month, monday.day + 7);
-    // `sessions` is already sorted forwards, so the first match is the nearest.
-    final next = sessions
-        .where((s) => !s.slotAt!.isBefore(nextMonday))
-        .firstOrNull
-        ?.slotAt;
+    final scheme = Theme.of(context).colorScheme;
 
-    return EmptyState(
-      icon: Icons.event_available_rounded,
-      title: 'Nothing on this week',
-      // "after this week", not "next" — a student paging through a past week
-      // would otherwise be told a class that has already run is still coming.
-      message: next == null
-          ? 'Classes appear here as soon as a tutor puts one on a date. Check '
-              'back, or look through the weeks either side.'
-          : 'This week is clear. The next class on the timetable after it is '
-              'on ${DateFormat('EEEE d MMMM').format(next)}.',
-      actionLabel: next == null ? null : 'Go to that week',
-      onAction: next == null ? null : () => onJump(next),
+    return Container(
+      padding: const EdgeInsets.all(Tokens.s4),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(Tokens.rMd),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Expanded(
+                child: Text(
+                  'Your progress',
+                  style: GoogleFonts.fraunces(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurface,
+                  ),
+                ),
+              ),
+              Text(
+                '${progress.done} of ${progress.total} topics',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Tokens.s3),
+          for (final p in progress.perSubject) _Bar(progress: p),
+        ],
+      ),
     );
   }
 }
 
+class _Bar extends StatelessWidget {
+  const _Bar({required this.progress});
+
+  final SubjectProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final subject = Subjects.one(progress.subject);
+    final complete = progress.complete;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Tokens.s3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(subject.icon, size: 12, color: subject.color),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  progress.subject,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurface,
+                  ),
+                ),
+              ),
+              if (complete)
+                Row(
+                  children: [
+                    Icon(Icons.check_circle_rounded,
+                        size: 12, color: scheme.tertiary),
+                    const SizedBox(width: 3),
+                    Text(
+                      'Completed',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w900,
+                        color: scheme.tertiary,
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Text(
+                  '${progress.done}/${progress.total}',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(100),
+            child: SizedBox(
+              height: 6,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: ColoredBox(color: scheme.surfaceContainerHigh),
+                  ),
+                  Positioned.fill(
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(end: progress.fraction.clamp(0.0, 1.0)),
+                      duration: const Duration(milliseconds: 600),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, value, _) => FractionallySizedBox(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: value,
+                        child: ColoredBox(
+                          color: complete ? scheme.tertiary : subject.color,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
