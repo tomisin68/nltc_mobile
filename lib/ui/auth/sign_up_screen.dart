@@ -10,6 +10,7 @@ import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/widgets/message_banner.dart';
 import 'validators.dart';
+import 'verify_email_screen.dart';
 
 /// Exams a student can be preparing for. Same list, same order and same
 /// spelling as the web signup form — the admin panel filters on these strings.
@@ -90,6 +91,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       'targetExam': _targetExam,
       'plan': 'free',
     };
+    final email = _email.text.trim();
 
     setState(() {
       _busy = true;
@@ -114,10 +116,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       // while Render wakes up.
       unawaited(_announceSignup(api, session, signup));
 
-      // The gate has already swapped the root route to the dashboard beneath
-      // us; drop this screen so the student lands on it rather than on a form
-      // they can still back into.
-      if (mounted) navigator.popUntil((r) => r.isFirst);
+      _finish(navigator, email);
     } on AuthFailure catch (e) {
       // The account itself could not be created — nothing to recover.
       if (mounted) setState(() => _error = e.message);
@@ -131,13 +130,29 @@ class _SignUpScreenState extends State<SignUpScreen> {
       final recovered = await _announceSignup(api, session, signup);
       if (!mounted) return;
       if (recovered) {
-        navigator.popUntil((r) => r.isFirst);
+        _finish(navigator, email);
       } else {
         setState(() => _error = 'Could not create your account. Try again.');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Lands the new student on their dashboard, with the code screen over it.
+  ///
+  /// The gate has already swapped the root route to the dashboard beneath us,
+  /// so this drops the form — which they must not be able to back into — and
+  /// then puts verification on top. On top rather than in place because it is a
+  /// nudge, not a gate: dismissing it leaves them on the dashboard they just
+  /// earned, and the banner there will ask again.
+  void _finish(NavigatorState navigator, String email) {
+    navigator.popUntil((r) => r.isFirst);
+    navigator.push(
+      MaterialPageRoute<bool>(
+        builder: (_) => VerifyEmailScreen(email: email),
+      ),
+    );
   }
 
   /// Registers the new account with the backend, then re-reads the profile.

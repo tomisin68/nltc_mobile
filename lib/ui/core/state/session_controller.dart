@@ -54,6 +54,45 @@ class SessionController extends ChangeNotifier {
   User? get account => _account;
   AppUser? get profile => _profile;
 
+  /// Whether this student has proved they own their email address.
+  ///
+  /// Two sources, because either can be the only one carrying the answer: the
+  /// profile document is what the app reads offline and what the website's
+  /// admin panel reports, while the Firebase Auth record is what a token
+  /// carries and survives a profile read being refused. The backend sets both
+  /// together, so disagreement only ever means one of them hasn't caught up.
+  ///
+  /// [_justVerified] covers the seconds after a successful code entry, before
+  /// either source has been re-read — long enough for the banner to reappear
+  /// under a student who has just dismissed it by verifying.
+  bool get emailVerified =>
+      _justVerified ||
+      (_profile?.emailVerified ?? false) ||
+      (_account?.emailVerified ?? false);
+
+  bool _justVerified = false;
+
+  /// Records that the backend has accepted this student's code.
+  ///
+  /// Only ever called after a 200 from `/auth/verify-otp`, so this cannot be
+  /// used to claim a verification that didn't happen. It then pulls both real
+  /// sources up to date and lets the local flag go.
+  Future<void> markEmailVerified() async {
+    _justVerified = true;
+    notifyListeners();
+
+    // `reload()` is what refreshes `emailVerified` on the Auth record — the
+    // cached User object never learns of a server-side change on its own.
+    try {
+      await _account?.reload();
+      _account = _auth.currentUser;
+    } catch (_) {
+      // Offline. The profile stream will carry it instead.
+    }
+    await refreshProfile();
+    notifyListeners();
+  }
+
   /// What this student is currently entitled to.
   ///
   /// Held rather than computed per read so every gate in the app sees the same
@@ -125,6 +164,8 @@ class SessionController extends ChangeNotifier {
 
   Future<void> _onAuthChanged(User? user) async {
     _account = user;
+    // Belongs to the account that earned it, not to the app.
+    _justVerified = false;
     await _profileSub?.cancel();
     _profileSub = null;
 

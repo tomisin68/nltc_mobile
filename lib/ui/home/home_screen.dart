@@ -25,6 +25,7 @@ import 'widgets/progress_notebook.dart';
 import 'widgets/setup_checklist.dart';
 import 'widgets/side_cards.dart';
 import 'widgets/today_plan.dart';
+import 'widgets/verify_email_banner.dart';
 
 /// The student's study desk.
 ///
@@ -190,6 +191,12 @@ class _HomeScreenState extends State<HomeScreen> {
             const PaymentAlert(),
             const SizedBox(height: Tokens.s3),
           ],
+
+          // Below the fee alert on purpose: an unverified email is worth
+          // fixing, but it is never the more urgent of the two. Renders
+          // nothing once the account is verified or the banner is snoozed,
+          // and owns its own spacing so it leaves no gap when it does.
+          const VerifyEmailBanner(),
 
           // The app's own card: what is downloaded, and whether the account is
           // verified enough to sit an offline exam. The website has no equivalent

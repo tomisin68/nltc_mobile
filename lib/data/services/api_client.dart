@@ -37,9 +37,17 @@ class ApiClient {
   ApiClient({
     FirebaseAuth? auth,
     this.baseUrl = 'https://nltc-backend.onrender.com',
-  }) : _auth = auth ?? FirebaseAuth.instance;
+  }) : _authOverride = auth;
 
-  final FirebaseAuth _auth;
+  final FirebaseAuth? _authOverride;
+
+  /// Resolved on use rather than in the constructor.
+  ///
+  /// `FirebaseAuth.instance` throws unless `Firebase.initializeApp` has already
+  /// run, which made merely *constructing* a client — as a test stub does —
+  /// depend on a live Firebase app it never intended to talk to.
+  FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
+
   final String baseUrl;
 
   /// Render cold starts genuinely take this long, so a shorter timeout would

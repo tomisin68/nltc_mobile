@@ -8,6 +8,7 @@ import 'data/repositories/auth_repository.dart';
 import 'data/repositories/billing_repository.dart';
 import 'data/repositories/broadcast_repository.dart';
 import 'data/repositories/chat_repository.dart';
+import 'data/repositories/email_verification_repository.dart';
 import 'data/repositories/exam_result_repository.dart';
 import 'data/repositories/gamification_repository.dart';
 import 'data/repositories/learning_profile_repository.dart';
@@ -117,6 +118,9 @@ class NltcApp extends StatelessWidget {
         Provider<PushService>(create: (_) => PushService()),
         Provider<AuthRepository>(
           create: (context) => AuthRepository(prefs: context.read()),
+        ),
+        Provider<EmailVerificationRepository>(
+          create: (context) => EmailVerificationRepository(api: context.read()),
         ),
         Provider<QuestionRepository>(
           create: (context) => QuestionRepository(local: context.read()),

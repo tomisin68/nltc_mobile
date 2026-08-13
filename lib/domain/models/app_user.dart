@@ -86,6 +86,7 @@ class AppUser {
     this.classType,
     this.role = 'student',
     this.plan,
+    this.emailVerified = false,
     this.studentMode = 'online',
     this.targetExam,
     this.state,
@@ -144,6 +145,16 @@ class AppUser {
 
   final String role;
   final String? plan;
+
+  /// Whether the student has proved they own [email] by entering the OTP.
+  ///
+  /// Written only by the backend, which sets it on this document and on the
+  /// Firebase Auth record together. Absent on every account created before the
+  /// OTP flow existed, which reads as false — correct, since those students
+  /// genuinely never verified. Prefer [SessionController.emailVerified] over
+  /// this field: it also honours the Auth record, which is what a student who
+  /// verified on the website will be carrying.
+  final bool emailVerified;
 
   /// `'online'` for every account the app creates — the app deliberately has
   /// no physical-centre signup path.
@@ -344,6 +355,7 @@ class AppUser {
         classType: classType,
         role: role,
         plan: plan,
+        emailVerified: emailVerified,
         studentMode: studentMode ?? this.studentMode,
         targetExam:
             targetExam == _unset ? this.targetExam : targetExam as String?,
@@ -398,6 +410,7 @@ class AppUser {
         classType: _str(m['classType']),
         role: _str(m['role']) ?? 'student',
         plan: _str(m['plan']),
+        emailVerified: m['emailVerified'] == true,
         studentMode: _str(m['studentMode']) ?? 'online',
         targetExam: _str(m['targetExam']),
         state: _str(m['state']),
@@ -452,6 +465,7 @@ class AppUser {
         'classType': classType,
         'role': role,
         'plan': plan,
+        'emailVerified': emailVerified,
         'studentMode': studentMode,
         'targetExam': targetExam,
         'state': state,

@@ -31,6 +31,7 @@ class PrefsService {
   static const _kReviewSettled = 'nltc.reviewSettled';
   static const _kWrappedSeen = 'nltc.wrappedSeen';
   static const _kWrappedSound = 'nltc.wrappedSound';
+  static const _kVerifyDismissedAt = 'nltc.verifyBannerDismissedAt';
 
   // ─── Theme ───────────────────────────────────────────────────────────────
 
@@ -215,4 +216,37 @@ class PrefsService {
 
   Future<void> setWrappedSoundOn(bool on) =>
       _prefs.setBool(_kWrappedSound, on);
+
+  // ─── Email verification ──────────────────────────────────────────────────
+
+  /// When the student last swiped the "verify your email" banner away.
+  ///
+  /// Dismissal is a snooze rather than a refusal: verification is the only
+  /// thing standing between a forgotten password and a lost account, so the
+  /// banner comes back after [verifyNagGap]. It is deliberately not cleared on
+  /// sign-out — the next person on a shared phone gets their own banner on
+  /// their own schedule, because the profile it reads is theirs.
+  DateTime? get verifyBannerDismissedAt {
+    final ms = _prefs.getInt(_kVerifyDismissedAt);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<void> dismissVerifyBanner() => _prefs.setInt(
+        _kVerifyDismissedAt,
+        DateTime.now().millisecondsSinceEpoch,
+      );
+
+  /// How long a dismissal holds the banner off.
+  static const verifyNagGap = Duration(days: 3);
+
+  /// Whether the banner should be on screen for an unverified student.
+  bool get shouldNagAboutVerifying {
+    final last = verifyBannerDismissedAt;
+    if (last == null) return true;
+    final since = DateTime.now().difference(last);
+    // A negative gap means the device clock moved backwards; a dismissal that
+    // reads as being in the future must not silence the banner forever.
+    if (since.isNegative) return true;
+    return since >= verifyNagGap;
+  }
 }

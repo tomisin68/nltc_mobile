@@ -12,6 +12,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../data/repositories/profile_repository.dart';
 import '../../domain/models/app_user.dart';
 import '../../domain/referral.dart';
+import '../auth/verify_email_screen.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
@@ -113,6 +114,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
       '${date.day.toString().padLeft(2, '0')}';
 
   // ─── Avatar ────────────────────────────────────────────────────────────────
+
+  /// Opens the code screen for a student who skipped verification at signup.
+  ///
+  /// The screen mails a fresh code as it opens, so this is a one-tap route from
+  /// "Not verified" to a code in the inbox. Nothing is done with the result:
+  /// a success is written to the session, and this screen watches it.
+  Future<void> _verifyEmail() async {
+    final email = context.read<SessionController>().account?.email;
+    if (email == null || email.isEmpty) {
+      showToast('This account has no email address to verify.');
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<bool>(
+        builder: (_) => VerifyEmailScreen(email: email),
+      ),
+    );
+  }
 
   Future<void> _changePhoto() async {
     final picked = await ImagePicker().pickImage(
@@ -230,6 +250,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _StudentRecordCard(
             profile: profile,
             email: session.account?.email,
+            emailVerified: session.emailVerified,
+            onVerifyEmail: _verifyEmail,
             avatarUrl: _avatarUrl,
             uploading: _uploading,
             uploadProgress: _uploadProgress,
@@ -406,6 +428,8 @@ class _StudentRecordCard extends StatelessWidget {
   const _StudentRecordCard({
     required this.profile,
     required this.email,
+    required this.emailVerified,
+    required this.onVerifyEmail,
     required this.avatarUrl,
     required this.uploading,
     required this.uploadProgress,
@@ -414,6 +438,8 @@ class _StudentRecordCard extends StatelessWidget {
 
   final AppUser? profile;
   final String? email;
+  final bool emailVerified;
+  final VoidCallback onVerifyEmail;
   final String? avatarUrl;
   final bool uploading;
   final double uploadProgress;
@@ -517,6 +543,69 @@ class _StudentRecordCard extends StatelessWidget {
             email ?? '',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
+
+          // The promise the signup screen makes when it offers "later" — this
+          // is the "later". Shown either way rather than only when unverified,
+          // because "is my email confirmed?" is a question worth being able to
+          // answer without having to trigger a code to find out.
+          if (email != null && email!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            if (emailVerified)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.verified_rounded,
+                    size: 14,
+                    color: scheme.tertiary,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Email verified',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.tertiary,
+                    ),
+                  ),
+                ],
+              )
+            else
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.error_outline_rounded,
+                    size: 14,
+                    color: scheme.error,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Not verified',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.error,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  // Compact, but the tap target is left at the framework's
+                  // default 48dp — a link this small is exactly the kind that
+                  // becomes unhittable when it is shrink-wrapped to its text.
+                  TextButton(
+                    onPressed: onVerifyEmail,
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: Tokens.s2,
+                      ),
+                    ),
+                    child: const Text('Verify', style: TextStyle(fontSize: 11.5)),
+                  ),
+                ],
+              ),
+          ],
+
           const SizedBox(height: Tokens.s3),
           AppBadge(
             label: isPro ? 'Pro' : 'Free',
