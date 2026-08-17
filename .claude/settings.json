@@ -39,7 +39,9 @@
       "WebFetch(domain:firebase.google.com)",
       "WebSearch",
       "Bash(gcloud auth *)",
-      "Bash(java -version)"
+      "Bash(java -version)",
+      "PowerShell(Set-Location \"$env:USERPROFILE\\\\StudioProjects\\\\nltc_mobile\"; & \"C:\\\\flutter\\\\src\\\\flutter\\\\bin\\\\flutter.bat\" build apk 2>&1 | Select-Object -Last 50)",
+      "PowerShell(Set-Location \"$env:USERPROFILE\\\\StudioProjects\\\\nltc_mobile\"; & \"C:\\\\flutter\\\\src\\\\flutter\\\\bin\\\\flutter.bat\" build apk 2>&1 | Select-Object -Last 45)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\styles",
@@ -51,7 +53,8 @@
       "c:\\Users\\Admin\\StudioProjects\\NLTC Online",
       "C:\\Users\\Admin\\StudioProjects\\NLTC Online",
       "C:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\utils",
-      "C:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\components\\payments"
+      "C:\\Users\\Admin\\StudioProjects\\NLTC Online\\src\\components\\payments",
+      "C:\\Users\\Admin\\StudioProjects\\internlink"
     ]
   }
 }
