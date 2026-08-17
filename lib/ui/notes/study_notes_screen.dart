@@ -48,6 +48,23 @@ class _StudyNotesScreenState extends State<StudyNotesScreen> {
   /// — either way this view falls back to exactly what Firestore holds.
   List<ReaderTopic> _readerTopics = const [];
 
+  /// What the student actually sees: topics somebody has written.
+  ///
+  /// [_topics] still holds every topic in the question bank, because that is
+  /// what gives a written note the bank's own spelling of its title. But a row
+  /// that only says "coming soon" is a row nobody can use, and a subject whose
+  /// list is nine parts promise to one part note reads as an empty section. So
+  /// the unwritten ones are dropped here, at the point of display, and the topic
+  /// list becomes the table of contents it looks like.
+  ///
+  /// A topic published only in the illustrated reader counts as written: the
+  /// static file *is* the note.
+  List<NoteTopic> get _visibleTopics => [
+        for (final t in _topics)
+          if (t.hasNote || NotesReaderService.find(_readerTopics, t.topic) != null)
+            t,
+      ];
+
 
   SubjectCategory get _category =>
       DashboardSidebar.isJuniorStudent(context.read<SessionController>().profile)
@@ -93,14 +110,19 @@ class _StudyNotesScreenState extends State<StudyNotesScreen> {
     // stored it, and this list may have taken its spelling from the question
     // bank instead.
     final key = wanted.topic.trim().toLowerCase();
-    for (final topic in _topics) {
-      if (topic.topic.trim().toLowerCase() == key) {
+    for (final topic in _visibleTopics) {
+      if (topic.topic.trim().toLowerCase() != key) continue;
+      final entry = NotesReaderService.find(_readerTopics, topic.topic);
+      // Published only as an illustrated file: that file is the note.
+      if (!topic.hasNote && entry != null) {
+        _openReader(entry);
+      } else {
         _openTopic(topic);
-        return;
       }
+      return;
     }
-    // Renamed or removed since the week was built — leave them on the topic
-    // list rather than on an error.
+    // Renamed, removed or unwritten since the week was built — leave them on
+    // the topic list rather than on an error or a blank page.
   }
 
   Future<void> _openSubject(Subject subject) async {
@@ -204,6 +226,7 @@ class _StudyNotesScreenState extends State<StudyNotesScreen> {
   Widget _topicList() {
     final scheme = Theme.of(context).colorScheme;
     final subject = _subject!;
+    final topics = _visibleTopics;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(Tokens.s4, 0, Tokens.s4, Tokens.s10),
@@ -226,13 +249,13 @@ class _StudyNotesScreenState extends State<StudyNotesScreen> {
               ],
             ),
           )
-        else if (_topics.isEmpty)
-          const AppCard(
+        else if (topics.isEmpty)
+          AppCard(
             child: EmptyState(
               icon: Icons.menu_book_outlined,
-              title: 'No topics yet',
-              message: 'Ask your admin to add questions with a Topic tag for '
-                  'this subject first.',
+              title: 'No notes yet',
+              message: "Your teachers haven't published notes for "
+                  '${subject.name} yet — check back soon.',
             ),
           )
         else
@@ -240,25 +263,24 @@ class _StudyNotesScreenState extends State<StudyNotesScreen> {
             padding: EdgeInsets.zero,
             child: Column(
               children: [
-                for (var i = 0; i < _topics.length; i++) ...[
+                for (var i = 0; i < topics.length; i++) ...[
                   if (i > 0)
                     Divider(height: 1, color: scheme.outlineVariant),
                   Builder(
                     builder: (_) {
                       final entry =
-                          NotesReaderService.find(_readerTopics, _topics[i].topic);
+                          NotesReaderService.find(_readerTopics, topics[i].topic);
                       // With no Firestore note behind it, the illustrated file
-                      // *is* the note — open it rather than showing "coming
-                      // soon" for a topic that has in fact been written.
-                      final readerOnly = entry != null && !_topics[i].hasNote;
+                      // *is* the note — open it rather than the empty reader.
+                      final readerOnly = entry != null && !topics[i].hasNote;
                       return _TopicRow(
-                        topic: _topics[i],
+                        topic: topics[i],
                         accent: subject.color,
                         hasReader: entry != null,
                         opensReader: readerOnly,
                         onTap: () => readerOnly
                             ? _openReader(entry)
-                            : _openTopic(_topics[i]),
+                            : _openTopic(topics[i]),
                       );
                     },
                   ),
@@ -373,57 +395,49 @@ class _TopicRow extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      child: Opacity(
-        // A topic with no note yet is dimmed but still tappable — it leads to the
-        // "coming soon" note and the option to practise it anyway.
-        opacity: topic.hasNote || hasReader ? 1 : 0.6,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: Tokens.minTouchTarget),
-          padding: const EdgeInsets.symmetric(
-            horizontal: Tokens.s4,
-            vertical: Tokens.s3,
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 3,
-                height: 22,
-                decoration: BoxDecoration(
-                  color: accent,
-                  borderRadius: BorderRadius.circular(2),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: Tokens.minTouchTarget),
+        padding: const EdgeInsets.symmetric(
+          horizontal: Tokens.s4,
+          vertical: Tokens.s3,
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 3,
+              height: 22,
+              decoration: BoxDecoration(
+                color: accent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: Tokens.s3),
+            Expanded(
+              child: Text(
+                topic.topic,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurface,
                 ),
               ),
-              const SizedBox(width: Tokens.s3),
-              Expanded(
-                child: Text(
-                  topic.topic,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: scheme.onSurface,
-                  ),
-                ),
+            ),
+            if (hasReader) ...[
+              const AppBadge(
+                label: 'Diagrams',
+                tone: BadgeTone.gold,
+                icon: Icons.auto_awesome_mosaic_rounded,
               ),
-              if (hasReader) ...[
-                const AppBadge(
-                  label: 'Diagrams',
-                  tone: BadgeTone.gold,
-                  icon: Icons.auto_awesome_mosaic_rounded,
-                ),
-                const SizedBox(width: Tokens.s2),
-              ] else if (!topic.hasNote) ...[
-                const AppBadge(label: 'Coming soon'),
-                const SizedBox(width: Tokens.s2),
-              ],
-              Icon(
-                opensReader
-                    ? Icons.open_in_new_rounded
-                    : Icons.chevron_right_rounded,
-                size: opensReader ? 15 : 18,
-                color: scheme.onSurfaceVariant,
-              ),
+              const SizedBox(width: Tokens.s2),
             ],
-          ),
+            Icon(
+              opensReader
+                  ? Icons.open_in_new_rounded
+                  : Icons.chevron_right_rounded,
+              size: opensReader ? 15 : 18,
+              color: scheme.onSurfaceVariant,
+            ),
+          ],
         ),
       ),
     );
@@ -467,19 +481,10 @@ class _NoteReader extends StatelessWidget {
       children: [
         _BackLink(label: subject.name, onTap: onBack),
         PageHeader(title: topic.topic, subtitle: subject.name),
-        AppCard(
-          child: topic.hasNote
-              // The admin writes raw HTML, so a note carries the teacher's own
-              // colours, highlights, tables and diagrams. NoteHtml renders that
-              // faithfully and safely — see its doc comment.
-              ? NoteHtml(html: topic.note!.content)
-              : const EmptyState(
-                  icon: Icons.hourglass_empty_rounded,
-                  title: 'Notes coming soon',
-                  message: "Your teachers haven't written notes for this topic "
-                      'yet — check back later.',
-                ),
-        ),
+        // The admin writes raw HTML, so a note carries the teacher's own
+        // colours, highlights, tables and diagrams. NoteHtml renders that
+        // faithfully and safely — see its doc comment.
+        AppCard(child: NoteHtml(html: topic.note!.content)),
         if (reader != null) ...[
           const SizedBox(height: Tokens.s4),
           AppCard(

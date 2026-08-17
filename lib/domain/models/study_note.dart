@@ -32,9 +32,10 @@ class StudyNote {
 
 /// One row in a subject's topic list.
 ///
-/// Topics come from the question bank, so a student can always practise a topic
-/// even when nobody has written the note yet — that case shows as "Coming soon"
-/// rather than being hidden, which is what tells a student the topic is examinable.
+/// Topics come from the question bank so that a written note inherits the bank's
+/// own spelling of its title — which is what "Take a Test on This Topic" filters
+/// the bank by. Topics nobody has written yet are dropped before the list is
+/// drawn: see `visibleTopics` in `study_notes_screen.dart`.
 class NoteTopic {
   const NoteTopic({required this.topic, this.note});
 
