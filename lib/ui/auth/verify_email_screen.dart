@@ -13,18 +13,32 @@ import '../core/widgets/message_banner.dart';
 /// The 6-digit code screen.
 ///
 /// Port of the `screen === 'otp'` branch of `src/pages/AuthPage.jsx`, and used
-/// from both places the web offers it: straight after signup, and later from
-/// the profile for a student who skipped.
+/// in two shapes.
 ///
-/// It is always dismissible. Verification is a nudge on this platform, not a
-/// gate, so a student who cannot reach their inbox right now must never be
-/// stranded on a screen with no way out.
+/// **[mandatory]** is the one that matters: verification is a requirement for
+/// students, and [AuthGate] shows this *in place of* the app until it is done.
+/// There is no back, no "later", and nothing behind it — because there is
+/// nothing behind it to go back to. The one way off it without a code is
+/// signing out, which a student who mistyped their address at signup needs:
+/// their code can never arrive, and sealing them onto a screen that cannot be
+/// satisfied would be the worst outcome of this whole change.
+///
+/// Pushed without [mandatory] it is the old dismissible sheet, still reached
+/// from the profile row by staff — who are exempt from the gate and may verify
+/// voluntarily.
 class VerifyEmailScreen extends StatefulWidget {
-  const VerifyEmailScreen({super.key, required this.email});
+  const VerifyEmailScreen({
+    super.key,
+    required this.email,
+    this.mandatory = false,
+  });
 
   /// Shown so the student can see which address to go and check — and spot the
   /// typo that is the real reason the mail never came.
   final String email;
+
+  /// Standing in for the app rather than sitting on top of it.
+  final bool mandatory;
 
   @override
   State<VerifyEmailScreen> createState() => _VerifyEmailScreenState();
@@ -129,7 +143,10 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
       await session.markEmailVerified();
       if (!mounted) return;
       showToast('Email verified', variant: ToastVariant.success);
-      navigator.pop(true);
+      // As the gate, this screen *is* the route — `markEmailVerified` has
+      // already flipped `mustVerifyEmail`, so AuthGate swaps the app in
+      // underneath. Popping would take the app with it.
+      if (!widget.mandatory) navigator.pop(true);
     } on VerificationFailure catch (e) {
       if (!mounted) return;
       setState(() {
@@ -152,161 +169,199 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     final scheme = Theme.of(context).colorScheme;
     final canResend = _cooldown <= 0 && !_sending;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Verify your email'),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(
-            Tokens.s6,
-            Tokens.s4,
-            Tokens.s6,
-            Tokens.s8,
-          ),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 64,
-                      height: 64,
-                      decoration: BoxDecoration(
-                        color: scheme.primaryContainer,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.mark_email_read_outlined,
-                        size: 30,
-                        color: scheme.onPrimaryContainer,
+    return PopScope(
+      // As the gate there is nothing behind this to pop to, and the hardware
+      // back button must not look like a way around it.
+      canPop: !widget.mandatory,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Verify your email'),
+          automaticallyImplyLeading: !widget.mandatory,
+        ),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+              Tokens.s6,
+              Tokens.s4,
+              Tokens.s6,
+              Tokens.s8,
+            ),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 64,
+                        height: 64,
+                        decoration: BoxDecoration(
+                          color: scheme.primaryContainer,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.mark_email_read_outlined,
+                          size: 30,
+                          color: scheme.onPrimaryContainer,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: Tokens.s5),
+                    const SizedBox(height: Tokens.s5),
 
-                  Text(
-                    'Check your inbox',
-                    style: text.headlineSmall,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: Tokens.s2),
-                  Text.rich(
-                    TextSpan(
-                      style: text.bodyMedium
-                          ?.copyWith(color: scheme.onSurfaceVariant),
-                      children: [
-                        const TextSpan(text: 'We sent a 6-digit code to '),
-                        TextSpan(
-                          text: widget.email,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+                    Text(
+                      'Check your inbox',
+                      style: text.headlineSmall,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: Tokens.s2),
+                    Text.rich(
+                      TextSpan(
+                        style: text.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
                         ),
-                        TextSpan(
-                          text: '. It expires in '
-                              '${EmailVerificationRepository.codeLifetime.inMinutes} '
-                              'minutes.',
+                        children: [
+                          const TextSpan(text: 'We sent a 6-digit code to '),
+                          TextSpan(
+                            text: widget.email,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          TextSpan(
+                            text:
+                                '. It expires in '
+                                '${EmailVerificationRepository.codeLifetime.inMinutes} '
+                                'minutes.',
+                          ),
+                        ],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: Tokens.s6),
+
+                    if (_error != null) ...[
+                      MessageBanner(message: _error!),
+                      const SizedBox(height: Tokens.s5),
+                    ],
+
+                    TextField(
+                      controller: _code,
+                      focusNode: _codeFocus,
+                      enabled: !_busy,
+                      autofocus: true,
+                      // `oneTimeCode` is what lets Android's SMS/mail autofill and
+                      // iOS's keyboard strip offer the code without retyping it.
+                      autofillHints: const [AutofillHints.oneTimeCode],
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      maxLength: 6,
+                      style: text.headlineMedium?.copyWith(
+                        letterSpacing: 12,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(6),
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'Verification code',
+                        hintText: '000000',
+                        counterText: '',
+                      ),
+                      onChanged: (v) {
+                        setState(() {});
+                        // Submitting the moment the sixth digit lands saves a tap
+                        // and matches what every OTP field on a phone does.
+                        if (v.length == 6) _verify();
+                      },
+                      onSubmitted: (_) => _verify(),
+                    ),
+                    const SizedBox(height: Tokens.s5),
+
+                    FilledButton(
+                      onPressed: _busy || _code.text.length < 6
+                          ? null
+                          : _verify,
+                      child: _busy
+                          ? SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: scheme.onPrimary,
+                              ),
+                            )
+                          : const Text('Verify email'),
+                    ),
+                    const SizedBox(height: Tokens.s4),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          "Didn't get it?",
+                          style: text.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: canResend
+                              ? () => _send(resend: true)
+                              : null,
+                          child: Text(
+                            _cooldown > 0
+                                ? 'Resend in ${_cooldown}s'
+                                : 'Resend code',
+                          ),
                         ),
                       ],
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: Tokens.s6),
 
-                  if (_error != null) ...[
-                    MessageBanner(message: _error!),
-                    const SizedBox(height: Tokens.s5),
+                    Text(
+                      'Check your spam folder too — the code arrives from '
+                      'no-reply@nltc.com.ng.',
+                      style: text.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: Tokens.s6),
+
+                    // As the gate, the only way off without a code — for the
+                    // student who mistyped their address and so can never
+                    // receive one. Otherwise, the old snooze.
+                    TextButton(
+                      onPressed: _busy
+                          ? null
+                          : widget.mandatory
+                          ? _signOut
+                          : () => Navigator.of(context).pop(false),
+                      child: Text(
+                        widget.mandatory
+                            ? 'Wrong address? Sign out'
+                            : "I'll do this later",
+                      ),
+                    ),
                   ],
-
-                  TextField(
-                    controller: _code,
-                    focusNode: _codeFocus,
-                    enabled: !_busy,
-                    autofocus: true,
-                    // `oneTimeCode` is what lets Android's SMS/mail autofill and
-                    // iOS's keyboard strip offer the code without retyping it.
-                    autofillHints: const [AutofillHints.oneTimeCode],
-                    keyboardType: TextInputType.number,
-                    textAlign: TextAlign.center,
-                    maxLength: 6,
-                    style: text.headlineMedium?.copyWith(
-                      letterSpacing: 12,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(6),
-                    ],
-                    decoration: const InputDecoration(
-                      labelText: 'Verification code',
-                      hintText: '000000',
-                      counterText: '',
-                    ),
-                    onChanged: (v) {
-                      setState(() {});
-                      // Submitting the moment the sixth digit lands saves a tap
-                      // and matches what every OTP field on a phone does.
-                      if (v.length == 6) _verify();
-                    },
-                    onSubmitted: (_) => _verify(),
-                  ),
-                  const SizedBox(height: Tokens.s5),
-
-                  FilledButton(
-                    onPressed:
-                        _busy || _code.text.length < 6 ? null : _verify,
-                    child: _busy
-                        ? SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.4,
-                              color: scheme.onPrimary,
-                            ),
-                          )
-                        : const Text('Verify email'),
-                  ),
-                  const SizedBox(height: Tokens.s4),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        "Didn't get it?",
-                        style: text.bodyMedium
-                            ?.copyWith(color: scheme.onSurfaceVariant),
-                      ),
-                      TextButton(
-                        onPressed: canResend ? () => _send(resend: true) : null,
-                        child: Text(
-                          _cooldown > 0
-                              ? 'Resend in ${_cooldown}s'
-                              : 'Resend code',
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  Text(
-                    'Check your spam folder too — the code arrives from '
-                    'no-reply@nltc.com.ng.',
-                    style: text.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: Tokens.s6),
-
-                  TextButton(
-                    onPressed: _busy ? null : () => Navigator.of(context).pop(false),
-                    child: const Text("I'll do this later"),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// Leaves the gate the only way it can be left without a code.
+  ///
+  /// Signing out drops the session, so AuthGate falls back to the sign-in
+  /// screen. Support can then correct the address on the account.
+  Future<void> _signOut() async {
+    final session = context.read<SessionController>();
+    await session.signOut();
+    if (!mounted) return;
+    showToast(
+      'Signed out. You will need to verify your email to continue.',
+      variant: ToastVariant.info,
     );
   }
 }

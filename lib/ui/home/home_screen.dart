@@ -25,7 +25,6 @@ import 'widgets/progress_notebook.dart';
 import 'widgets/setup_checklist.dart';
 import 'widgets/side_cards.dart';
 import 'widgets/today_plan.dart';
-import 'widgets/verify_email_banner.dart';
 
 /// The student's study desk.
 ///
@@ -71,24 +70,30 @@ class _HomeScreenState extends State<HomeScreen> {
     // Fired together rather than in sequence: these are four independent reads and
     // the dashboard should not wait for the slowest to show the first.
     unawaited(
-      gamification.myRank().then((rank) {
-        if (mounted) {
-          setState(() {
-            _rank = rank.rank;
-            _loadingRank = false;
-          });
-        }
-      }).catchError((_) {
-        if (mounted) setState(() => _loadingRank = false);
-      }),
+      gamification
+          .myRank()
+          .then((rank) {
+            if (mounted) {
+              setState(() {
+                _rank = rank.rank;
+                _loadingRank = false;
+              });
+            }
+          })
+          .catchError((_) {
+            if (mounted) setState(() => _loadingRank = false);
+          }),
     );
 
     unawaited(
-      resultRepository.recent(uid).then((results) {
-        if (mounted) setState(() => _results = results);
-      }).catchError((_) {
-        if (mounted) setState(() => _results = const <ExamResult>[]);
-      }),
+      resultRepository
+          .recent(uid)
+          .then((results) {
+            if (mounted) setState(() => _results = results);
+          })
+          .catchError((_) {
+            if (mounted) setState(() => _results = const <ExamResult>[]);
+          }),
     );
 
     unawaited(
@@ -135,7 +140,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final uid = session.account?.uid;
     unawaited(
-      context.read<XpService>().award('join_live', meta: {'sessionId': live.id}),
+      context.read<XpService>().award(
+        'join_live',
+        meta: {'sessionId': live.id},
+      ),
     );
     await context.read<MissionSignals>().set('join_live', uid);
     if (!mounted) return;
@@ -157,7 +165,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // The fee alert is only for students who genuinely have to pay to get in. A
     // student inside their trial already has full access, so telling them their
     // account is "pending activation" would be wrong.
-    final physicalUnpaid = profile != null &&
+    final physicalUnpaid =
+        profile != null &&
         profile.studentMode == 'physical' &&
         !profile.lessonFeePaid &&
         !access.active;
@@ -167,12 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return RefreshIndicator(
       onRefresh: _refresh,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          Tokens.s4,
-          0,
-          Tokens.s4,
-          Tokens.s10,
-        ),
+        padding: const EdgeInsets.fromLTRB(Tokens.s4, 0, Tokens.s4, Tokens.s10),
         children: [
           HeroDesk(
             profile: profile,
@@ -192,11 +196,9 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: Tokens.s3),
           ],
 
-          // Below the fee alert on purpose: an unverified email is worth
-          // fixing, but it is never the more urgent of the two. Renders
-          // nothing once the account is verified or the banner is snoozed,
-          // and owns its own spacing so it leaves no gap when it does.
-          const VerifyEmailBanner(),
+          // The "please verify" banner is gone: a student cannot reach this
+          // screen unverified any more — AuthGate holds them on the code screen
+          // instead of the app — so the nag has nobody left to nag.
 
           // The app's own card: what is downloaded, and whether the account is
           // verified enough to sit an offline exam. The website has no equivalent

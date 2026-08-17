@@ -29,9 +29,9 @@ class SessionController extends ChangeNotifier {
     required AuthRepository auth,
     required LocalDatabase local,
     required FirestoreCache cache,
-  })  : _auth = auth,
-        _local = local,
-        _cache = cache {
+  }) : _auth = auth,
+       _local = local,
+       _cache = cache {
     _authSub = _auth.authStateChanges.listen(_onAuthChanged);
   }
 
@@ -71,6 +71,46 @@ class SessionController extends ChangeNotifier {
       (_account?.emailVerified ?? false);
 
   bool _justVerified = false;
+
+  /// Roles that are exempt from the compulsory email check.
+  ///
+  /// Their accounts are not self-serve: the backend creates them with a
+  /// temporary password and `emailVerified: false`, so gating them would lock
+  /// out every admin and center manager on their next sign-in. Mirrors
+  /// `requiresEmailVerification` in the website's `src/utils/access.js`.
+  static const _exemptRoles = {
+    'admin',
+    'super_admin',
+    'center_manager',
+    'teacher',
+  };
+
+  /// Does the compulsory email check apply to this profile at all?
+  ///
+  /// Kept pure and separate from whether they have actually verified, because
+  /// getting *this* half wrong is what locks real people out of a live
+  /// platform, and the two directions fail differently: letting an unverified
+  /// student through is a gap, while gating an admin strands them outside the
+  /// console holding the account that would unlock it.
+  ///
+  /// A null profile — a competition entrant, or a read that has not landed yet
+  /// — is exempt. Unknown must fail open; the gate closes a frame later when
+  /// the answer is in, rather than flashing at somebody it does not apply to.
+  ///
+  /// A profile with no role counts as a student: that is what signup writes.
+  @visibleForTesting
+  static bool profileNeedsVerification(AppUser? profile) {
+    if (profile == null) return false;
+    return !_exemptRoles.contains(profile.role);
+  }
+
+  /// Is this student being held at the door until they verify their email?
+  ///
+  /// Verification used to be a nudge — a dismissible screen after signup and a
+  /// banner on the dashboard. It is now a requirement, and this is the whole of
+  /// it: [AuthGate] reads this and shows the code screen instead of the app.
+  bool get mustVerifyEmail =>
+      profileNeedsVerification(_profile) && !emailVerified;
 
   /// Records that the backend has accepted this student's code.
   ///

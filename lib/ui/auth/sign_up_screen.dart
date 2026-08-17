@@ -10,7 +10,6 @@ import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/widgets/message_banner.dart';
 import 'validators.dart';
-import 'verify_email_screen.dart';
 
 /// Exams a student can be preparing for. Same list, same order and same
 /// spelling as the web signup form — the admin panel filters on these strings.
@@ -25,11 +24,43 @@ const _targetExams = [
 ];
 
 const _nigerianStates = [
-  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue',
-  'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT',
-  'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi',
-  'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo',
-  'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara',
+  'Abia',
+  'Adamawa',
+  'Akwa Ibom',
+  'Anambra',
+  'Bauchi',
+  'Bayelsa',
+  'Benue',
+  'Borno',
+  'Cross River',
+  'Delta',
+  'Ebonyi',
+  'Edo',
+  'Ekiti',
+  'Enugu',
+  'FCT',
+  'Gombe',
+  'Imo',
+  'Jigawa',
+  'Kaduna',
+  'Kano',
+  'Katsina',
+  'Kebbi',
+  'Kogi',
+  'Kwara',
+  'Lagos',
+  'Nasarawa',
+  'Niger',
+  'Ogun',
+  'Ondo',
+  'Osun',
+  'Oyo',
+  'Plateau',
+  'Rivers',
+  'Sokoto',
+  'Taraba',
+  'Yobe',
+  'Zamfara',
 ];
 
 /// Creates a student account and its `users/{uid}` profile.
@@ -91,7 +122,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
       'targetExam': _targetExam,
       'plan': 'free',
     };
-    final email = _email.text.trim();
 
     setState(() {
       _busy = true;
@@ -116,7 +146,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       // while Render wakes up.
       unawaited(_announceSignup(api, session, signup));
 
-      _finish(navigator, email);
+      _finish(navigator);
     } on AuthFailure catch (e) {
       // The account itself could not be created — nothing to recover.
       if (mounted) setState(() => _error = e.message);
@@ -130,7 +160,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       final recovered = await _announceSignup(api, session, signup);
       if (!mounted) return;
       if (recovered) {
-        _finish(navigator, email);
+        _finish(navigator);
       } else {
         setState(() => _error = 'Could not create your account. Try again.');
       }
@@ -139,20 +169,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
   }
 
-  /// Lands the new student on their dashboard, with the code screen over it.
+  /// Drops the signup form and hands the new student to the gate.
   ///
-  /// The gate has already swapped the root route to the dashboard beneath us,
-  /// so this drops the form — which they must not be able to back into — and
-  /// then puts verification on top. On top rather than in place because it is a
-  /// nudge, not a gate: dismissing it leaves them on the dashboard they just
-  /// earned, and the banner there will ask again.
-  void _finish(NavigatorState navigator, String email) {
+  /// AuthGate has already swapped the root route underneath us, and for a brand
+  /// new student that route *is* the code screen — verification is a
+  /// requirement now, so it stands in place of the app rather than on top of
+  /// it. All this has to do is clear the form they must not be able to back
+  /// into; pushing a second, dismissible copy of the code screen over the gate
+  /// is exactly the "skip" this change removes.
+  void _finish(NavigatorState navigator) {
     navigator.popUntil((r) => r.isFirst);
-    navigator.push(
-      MaterialPageRoute<bool>(
-        builder: (_) => VerifyEmailScreen(email: email),
-      ),
-    );
   }
 
   /// Registers the new account with the backend, then re-reads the profile.
@@ -207,8 +233,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       Text(
                         'Full access to every subject, past question and mock '
                         'exam. No card needed.',
-                        style: text.bodyMedium
-                            ?.copyWith(color: scheme.onSurfaceVariant),
+                        style: text.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                       const SizedBox(height: Tokens.s6),
 
@@ -280,7 +307,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         textInputAction: TextInputAction.next,
                         autofillHints: const [AutofillHints.telephoneNumber],
                         inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'[\d+\s-]')),
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'[\d+\s-]'),
+                          ),
                         ],
                         validator: Validators.phone,
                       ),
@@ -299,8 +328,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         onChanged: _busy
                             ? null
                             : (v) => setState(
-                                  () => _targetExam = v ?? _targetExams.first,
-                                ),
+                                () => _targetExam = v ?? _targetExams.first,
+                              ),
                       ),
                       const SizedBox(height: Tokens.s4),
 
@@ -337,8 +366,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                   ? Icons.visibility_outlined
                                   : Icons.visibility_off_outlined,
                             ),
-                            tooltip:
-                                _obscure ? 'Show password' : 'Hide password',
+                            tooltip: _obscure
+                                ? 'Show password'
+                                : 'Hide password',
                           ),
                         ),
                         obscureText: _obscure,
@@ -383,12 +413,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         children: [
                           Text(
                             'Already have an account?',
-                            style: text.bodyMedium
-                                ?.copyWith(color: scheme.onSurfaceVariant),
+                            style: text.bodyMedium?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
                           ),
                           TextButton(
-                            onPressed:
-                                _busy ? null : () => Navigator.of(context).pop(),
+                            onPressed: _busy
+                                ? null
+                                : () => Navigator.of(context).pop(),
                             child: const Text('Sign in'),
                           ),
                         ],
