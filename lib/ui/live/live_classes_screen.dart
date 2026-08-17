@@ -8,13 +8,14 @@ import 'package:provider/provider.dart';
 import '../../data/repositories/live_repository.dart';
 import '../../data/services/mission_signals.dart';
 import '../../domain/models/live_session.dart';
-import '../core/state/dashboard_controller.dart';
+import '../../domain/pro_features.dart';
 import '../core/state/session_controller.dart';
 import '../core/state/xp_service.dart';
 import '../core/theme/app_palette.dart';
 import '../core/toast.dart';
 import '../core/widgets/empty_state.dart';
 import '../core/widgets/page_header.dart';
+import '../core/widgets/pro_gate.dart';
 import '../core/widgets/skeleton.dart';
 import 'livestream_screen.dart';
 
@@ -75,10 +76,10 @@ class _LiveClassesScreenState extends State<LiveClassesScreen> {
   Future<void> _join(LiveSession session) async {
     final controller = context.read<SessionController>();
     // Re-read on the tap: the button can sit on screen across the boundary, and a
-    // sub-second stale render must not buy a session.
-    if (!controller.access.active) {
-      showToast('Upgrade to Pro to join live classes');
-      context.read<DashboardController>().select(DashboardView.settings);
+    // sub-second stale render must not buy a session. `isPro`, not `active` — a
+    // trial is active and still does not include live classes.
+    if (!controller.access.isPro) {
+      await showProUpsell(context, ProFeature.liveClasses);
       return;
     }
     if (session.channel.isEmpty) {
@@ -107,8 +108,12 @@ class _LiveClassesScreenState extends State<LiveClassesScreen> {
   @override
   Widget build(BuildContext context) {
     final sessions = _sessions;
-    final access = context.select<SessionController, bool>(
-      (s) => s.access.active,
+    // The shell shows the upsell in place of this whole screen to a free
+    // account, so in practice this is only false for the frame after a plan
+    // lapses while the list is open — which is exactly when the banner and the
+    // guard in [_join] earn their keep.
+    final isPro = context.select<SessionController, bool>(
+      (s) => s.access.isPro,
     );
 
     if (sessions == null) {
@@ -160,7 +165,7 @@ class _LiveClassesScreenState extends State<LiveClassesScreen> {
           _Marquee(session: marquee, onJoin: () => _join(marquee)),
           const SizedBox(height: Tokens.s4),
         ],
-        if (!access) ...[
+        if (!isPro) ...[
           const _ProLock(),
           const SizedBox(height: Tokens.s4),
         ],

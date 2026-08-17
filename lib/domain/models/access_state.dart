@@ -51,6 +51,39 @@ class AccessState {
   /// `true` only when we know the profile and it is locked.
   bool get isLocked => known && !active;
 
+  /// Whether this account has actually been paid for — the bar the Pro-only
+  /// features sit behind.
+  ///
+  /// Deliberately not the same question as [active]. The three free days make an
+  /// account active without anybody having paid, and Messages, My Wrapped and
+  /// Live Classes are not part of what a free account gets: they are the reason
+  /// to upgrade. Everything else — lessons, CBT, notes, mock exams — stays open
+  /// for the whole trial, so a new student still gets a real look at the
+  /// platform. See [ProFeature] for the three and the copy that explains them.
+  ///
+  /// Staff pass because their access never came from a fee in the first place,
+  /// and a grandfathered record passes because a paid flag with no dates is the
+  /// only trace those accounts have of the payment they made.
+  ///
+  /// An unknown profile passes, for the same reason [active] does: a student who
+  /// has paid must never be shown an upsell for something they own while their
+  /// profile is still loading. The gate closes a frame later, once the answer is
+  /// in — the opposite order would flash a paywall at a paying student on every
+  /// cold start.
+  bool get isPro => switch (reason) {
+        AccessReason.staff ||
+        AccessReason.lessonFee ||
+        AccessReason.plan ||
+        AccessReason.legacy ||
+        AccessReason.loading =>
+          true,
+        AccessReason.trial ||
+        AccessReason.expired ||
+        AccessReason.trialEnded ||
+        AccessReason.unpaid =>
+          false,
+      };
+
   /// When this state stops being true on its own, with no profile write.
   ///
   /// Only an *active* grant expires by itself — a locked account cannot become

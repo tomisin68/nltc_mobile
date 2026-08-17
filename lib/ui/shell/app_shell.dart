@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../data/repositories/attempt_repository.dart';
 import '../../data/services/push_service.dart';
 import '../../domain/models/app_notification.dart';
+import '../../domain/pro_features.dart';
 import '../core/state/activity_controller.dart';
 import '../core/state/dashboard_controller.dart';
 import '../core/state/practice_controller.dart';
@@ -13,6 +14,7 @@ import '../core/state/presence_controller.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/widgets/in_app_browser.dart';
+import '../core/widgets/pro_gate.dart';
 import '../announcements/announcements_screen.dart';
 import '../blog/blog_screen.dart';
 import '../cbt/bece_practice_screen.dart';
@@ -66,6 +68,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     DashboardView.profile,
     DashboardView.settings,
     DashboardView.blog,
+  };
+
+  /// The views a free account does not include at all — Pro only.
+  ///
+  /// The other half of the same idea as [_freeViews], one step up: those stay
+  /// open when a paid account lapses, while these are never open without a
+  /// payment, not even during the three free days. My Wrapped is the third
+  /// Pro-only feature and is gated at its sidebar link, having no view of its
+  /// own. See [ProFeature].
+  static const _proViews = {
+    DashboardView.chat: ProFeature.messages,
+    DashboardView.live: ProFeature.liveClasses,
   };
 
   @override
@@ -141,6 +155,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final viewIsFree = _freeViews.contains(view);
     final locked = access.isLocked && !viewIsFree;
 
+    // A Pro-only destination a free account has walked into — from the sidebar,
+    // a dashboard card, or a tapped chat push. The upsell stands in for the view
+    // rather than the tap being swallowed, so the student learns what is behind
+    // it instead of finding a link that does nothing. The account lock outranks
+    // it: somebody whose payment has lapsed needs telling that, not an offer.
+    final proFeature = _proViews[view];
+    final needsPro = proFeature != null && !locked && !access.isPro;
+
     return Scaffold(
       drawer: const DashboardSidebar(),
       appBar: DashboardTopbar(title: view.title),
@@ -151,7 +173,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       // conversation" button in the same corner, so support yields it there and
       // stays reachable from the sidebar instead — which costs nothing, because
       // Messages is not a free view and a locked account cannot open it anyway.
-      floatingActionButton: view == DashboardView.chat
+      // A free account being shown the upsell in its place has no such button,
+      // so the corner is free again and support comes back.
+      floatingActionButton: view == DashboardView.chat && !needsPro
           ? null
           : const SupportFab(),
       body: SafeArea(
@@ -172,7 +196,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                       viewIsFree: viewIsFree,
                     ),
                   ),
-                  Expanded(child: _view(view)),
+                  Expanded(
+                    child: needsPro
+                        // The screen is never built, so its Firestore listeners
+                        // never start: a free account does not quietly stream a
+                        // chat list or a live schedule it cannot open.
+                        ? ProUpsellView(feature: proFeature, access: access)
+                        : _view(view),
+                  ),
                 ],
               ),
       ),

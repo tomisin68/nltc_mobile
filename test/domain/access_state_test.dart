@@ -212,6 +212,106 @@ void main() {
     });
   });
 
+  group('isPro — the bar the three Pro-only features sit behind', () {
+    test('a paid subscription clears it', () {
+      final access = AccessState.evaluate(
+        _user({'plan': 'pro', 'planExpiresAt': _now + 30 * _day}),
+        nowMs: _now,
+      );
+
+      expect(access.isPro, isTrue);
+    });
+
+    test('a centre lesson fee clears it — they have paid too', () {
+      final access = AccessState.evaluate(
+        _user({
+          'studentMode': 'physical',
+          'lessonFeePaid': true,
+          'lessonFeeExpiresAt': _now + 10 * _day,
+        }),
+        nowMs: _now,
+      );
+
+      expect(access.isPro, isTrue);
+    });
+
+    test('staff clear it — their access never came from a fee', () {
+      for (final role in ['admin', 'super_admin', 'center_manager', 'teacher']) {
+        final access = AccessState.evaluate(_user({'role': role}), nowMs: _now);
+        expect(access.isPro, isTrue, reason: role);
+      }
+    });
+
+    test('a grandfathered record clears it', () {
+      final access = AccessState.evaluate(
+        _user({'lessonFeePaid': true}),
+        nowMs: _now,
+      );
+
+      expect(access.reason, AccessReason.legacy);
+      expect(access.isPro, isTrue);
+    });
+
+    test('a brand-new free account on trial does NOT clear it', () {
+      // The whole point: the trial is active, so lessons, CBT and notes are
+      // open, but nobody has paid — messages, live classes and Wrapped are not
+      // part of a free account.
+      final access = AccessState.evaluate(
+        _user({
+          'plan': 'free',
+          'studentMode': 'online',
+          'trialEndsAt': _now + 3 * _day,
+        }),
+        nowMs: _now,
+      );
+
+      expect(access.active, isTrue);
+      expect(access.isLocked, isFalse);
+      expect(access.isPro, isFalse);
+    });
+
+    test('neither does a used-up trial, or an account with no grant', () {
+      expect(
+        AccessState.evaluate(
+          _user({'trialEndsAt': _now - _day}),
+          nowMs: _now,
+        ).isPro,
+        isFalse,
+      );
+      expect(AccessState.evaluate(_user({}), nowMs: _now).isPro, isFalse);
+    });
+
+    test('a lapsed subscription loses it', () {
+      final access = AccessState.evaluate(
+        _user({'plan': 'pro', 'planExpiresAt': _now - _day}),
+        nowMs: _now,
+      );
+
+      expect(access.reason, AccessReason.expired);
+      expect(access.isPro, isFalse);
+    });
+
+    test('an unknown profile clears it, so nobody is upsold their own plan', () {
+      final access = AccessState.evaluate(null, nowMs: _now);
+
+      expect(access.known, isFalse);
+      expect(access.isPro, isTrue);
+    });
+
+    test('a payment mid-trial clears it from that moment', () {
+      final user = _user({
+        'plan': 'pro',
+        'planExpiresAt': _now + 30 * _day,
+        'trialEndsAt': _now + _day,
+      });
+
+      final access = AccessState.evaluate(user, nowMs: _now);
+      expect(access.isOnTrial, isTrue, reason: 'the window is still open');
+      expect(access.reason, AccessReason.plan);
+      expect(access.isPro, isTrue, reason: 'the payment is what counts');
+    });
+  });
+
   group('lapsesAt', () {
     test('is when an active grant runs out', () {
       final access = AccessState.evaluate(

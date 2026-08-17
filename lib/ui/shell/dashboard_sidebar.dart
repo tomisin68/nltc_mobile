@@ -8,12 +8,14 @@ import '../../domain/models/access_state.dart';
 import '../../domain/models/app_user.dart';
 import '../../domain/models/gamification.dart';
 import '../../domain/models/wrapped_stats.dart';
+import '../../domain/pro_features.dart';
 import '../core/state/dashboard_badge_controller.dart';
 import '../core/state/dashboard_controller.dart';
 import '../core/state/notification_controller.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
 import '../core/widgets/brand_mark.dart';
+import '../core/widgets/pro_gate.dart';
 import '../core/widgets/ruled_paper.dart';
 import '../support/support_sheet.dart';
 import '../wrapped/wrapped_screen.dart';
@@ -56,6 +58,9 @@ class DashboardSidebar extends StatelessWidget {
     final width = _width.clamp(0.0, MediaQuery.sizeOf(context).width * 0.86);
     final isJunior = isJuniorStudent(profile);
     final locked = access.isLocked;
+    // Free accounts — the trial included — get a PRO pill on the three links
+    // they cannot follow, rather than finding out only after the tap.
+    final isPro = access.isPro;
 
     return Drawer(
       width: width,
@@ -89,8 +94,8 @@ class DashboardSidebar extends StatelessWidget {
                 child: ListView(
                   padding: const EdgeInsets.only(top: 6, bottom: 8),
                   children: isJunior
-                      ? _juniorNav(context, locked)
-                      : _seniorNav(context, locked),
+                      ? _juniorNav(context, locked: locked, isPro: isPro)
+                      : _seniorNav(context, locked: locked, isPro: isPro),
                 ),
               ),
               _UpgradeCard(profile: profile),
@@ -104,7 +109,12 @@ class DashboardSidebar extends StatelessWidget {
 
   // ─── Nav ───────────────────────────────────────────────────────────────────
 
-  List<Widget> _juniorNav(BuildContext context, bool locked) => [
+  List<Widget> _juniorNav(
+    BuildContext context, {
+    required bool locked,
+    required bool isPro,
+  }) =>
+      [
         const _NavSection(number: '01', label: 'Study'),
         _link(context, DashboardView.home, Icons.dashboard_rounded, 'Dashboard',
             locked),
@@ -115,21 +125,21 @@ class DashboardSidebar extends StatelessWidget {
         const _NavSection(number: '02', label: 'Compete & Connect'),
         _link(context, DashboardView.live, Icons.sensors_rounded,
             'Live Classes', locked,
-            showLiveDot: true),
+            showLiveDot: true, proLocked: !isPro),
         _link(context, DashboardView.timetable, Icons.calendar_month_rounded,
             'Timetable', locked),
         _link(context, DashboardView.leaderboard, Icons.emoji_events_rounded,
             'Leaderboard', locked),
         _link(context, DashboardView.chat, Icons.chat_bubble_rounded, 'Messages',
             locked,
-            badge: _Badge.chat),
+            badge: _Badge.chat, proLocked: !isPro),
         _link(context, DashboardView.announcements, Icons.campaign_rounded,
             'Announcements', locked,
             badge: _Badge.notifications),
         _link(context, DashboardView.blog, Icons.article_rounded, 'Blog',
             locked),
         const _NavSection(number: '03', label: 'My Account'),
-        const _WrappedLink(),
+        _WrappedLink(isPro: isPro),
         _link(context, DashboardView.profile, Icons.badge_rounded, 'My Profile',
             locked),
         _link(context, DashboardView.settings, Icons.settings_rounded,
@@ -137,7 +147,12 @@ class DashboardSidebar extends StatelessWidget {
         const _SupportLink(),
       ];
 
-  List<Widget> _seniorNav(BuildContext context, bool locked) => [
+  List<Widget> _seniorNav(
+    BuildContext context, {
+    required bool locked,
+    required bool isPro,
+  }) =>
+      [
         const _NavSection(number: '01', label: 'Study'),
         _link(context, DashboardView.home, Icons.dashboard_rounded, 'Dashboard',
             locked),
@@ -152,7 +167,7 @@ class DashboardSidebar extends StatelessWidget {
         const _NavSection(number: '02', label: 'Compete & Connect'),
         _link(context, DashboardView.live, Icons.sensors_rounded,
             'Live Classes', locked,
-            showLiveDot: true),
+            showLiveDot: true, proLocked: !isPro),
         _link(context, DashboardView.timetable, Icons.calendar_month_rounded,
             'Timetable', locked),
         _link(context, DashboardView.mockExams, Icons.description_rounded,
@@ -161,14 +176,14 @@ class DashboardSidebar extends StatelessWidget {
             'Leaderboard', locked),
         _link(context, DashboardView.chat, Icons.chat_bubble_rounded, 'Messages',
             locked,
-            badge: _Badge.chat),
+            badge: _Badge.chat, proLocked: !isPro),
         _link(context, DashboardView.announcements, Icons.campaign_rounded,
             'Announcements', locked,
             badge: _Badge.notifications),
         _link(context, DashboardView.blog, Icons.article_rounded, 'Blog',
             locked),
         const _NavSection(number: '03', label: 'My Account'),
-        const _WrappedLink(),
+        _WrappedLink(isPro: isPro),
         _link(context, DashboardView.profile, Icons.badge_rounded, 'My Profile',
             locked),
         _link(context, DashboardView.settings, Icons.settings_rounded,
@@ -183,6 +198,7 @@ class DashboardSidebar extends StatelessWidget {
     String label,
     bool accountLocked, {
     bool showLiveDot = false,
+    bool proLocked = false,
     _Badge? badge,
   }) =>
       _NavLink(
@@ -190,8 +206,13 @@ class DashboardSidebar extends StatelessWidget {
         icon: icon,
         label: label,
         locked: accountLocked && !_freeViews.contains(view),
+        // A lapsed account is already being told the whole platform is shut; a
+        // "PRO" pill on top of the padlock would just be noise.
+        proLocked: proLocked && !accountLocked,
         showLiveDot: showLiveDot,
         badge: badge,
+        // Still navigates: the shell shows the upsell in place of the view,
+        // which is where a student learns what they are missing.
         onTap: () => _go(context, view),
       );
 
@@ -684,6 +705,7 @@ class _NavLink extends StatelessWidget {
     required this.label,
     required this.locked,
     required this.onTap,
+    this.proLocked = false,
     this.showLiveDot = false,
     this.badge,
   });
@@ -691,7 +713,15 @@ class _NavLink extends StatelessWidget {
   final DashboardView view;
   final IconData icon;
   final String label;
+
+  /// The account has lapsed — a padlock, and everything but the free views is
+  /// behind it.
   final bool locked;
+
+  /// The account is free and this destination is Pro-only — a "PRO" pill.
+  /// Distinct from [locked] on purpose: nothing has been taken away here.
+  final bool proLocked;
+
   final VoidCallback onTap;
   final bool showLiveDot;
   final _Badge? badge;
@@ -703,10 +733,14 @@ class _NavLink extends StatelessWidget {
     final active =
         context.select<DashboardController, bool>((c) => c.view == view);
 
+    // Either way the student cannot get in, so neither state advertises what is
+    // happening inside: a red "3" beside a link you cannot open is a nag, not
+    // news.
+    final barred = locked || proLocked;
     final liveDot = showLiveDot &&
-        !locked &&
+        !barred &&
         context.select<DashboardBadgeController, bool>((c) => c.liveActive);
-    final count = locked ? 0 : _badgeCount(context);
+    final count = barred ? 0 : _badgeCount(context);
 
     final iconColor = active
         ? BlueprintPalette.white
@@ -717,8 +751,13 @@ class _NavLink extends StatelessWidget {
 
     return Opacity(
       // `.ds-link.sb-link-locked` — dimmed, but still tappable so the student
-      // lands on the paywall and learns why, rather than on a dead button.
-      opacity: locked ? 0.5 : 1,
+      // lands on the paywall and learns why, rather than on a dead button. A
+      // Pro-only link is dimmed less: it is an offer, not a closed door.
+      opacity: locked
+          ? 0.5
+          : proLocked
+              ? 0.72
+              : 1,
       child: Stack(
         children: [
           // The active marker: a 3px pen tick in the margin.
@@ -779,6 +818,8 @@ class _NavLink extends StatelessWidget {
                   if (locked)
                     Icon(Icons.lock_rounded,
                         size: 12, color: scheme.onSurfaceVariant)
+                  else if (proLocked)
+                    const ProBadge()
                   else if (liveDot)
                     const _PulsingLiveDot()
                   else if (count > 0)
@@ -813,7 +854,11 @@ class _NavLink extends StatelessWidget {
 /// `VIEW_TITLES`, and the recap is a full-screen story that would fight the
 /// dashboard's topbar and drawer for the screen anyway.
 class _WrappedLink extends StatelessWidget {
-  const _WrappedLink();
+  const _WrappedLink({required this.isPro});
+
+  /// Pro-only, like Messages and Live Classes — but with no [DashboardView] for
+  /// the shell to gate, so this link is the gate.
+  final bool isPro;
 
   /// Whether the month that just ended has a recap the student has not opened.
   static bool _isUnseen(PrefsService prefs) {
@@ -825,66 +870,81 @@ class _WrappedLink extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final unseen = _isUnseen(context.read<PrefsService>());
+    // A recap they cannot open is not new to them, so the NEW flag waits until
+    // they can.
+    final unseen = isPro && _isUnseen(context.read<PrefsService>());
 
-    return InkWell(
-      onTap: () {
-        final navigator = Navigator.of(context);
-        navigator.pop();
-        navigator.push(WrappedScreen.route());
-      },
-      child: Container(
-        constraints: const BoxConstraints(minHeight: Tokens.minTouchTarget),
-        padding: const EdgeInsets.only(left: 26, right: 16),
-        child: Row(
-          children: [
-            Container(
-              width: 26,
-              height: 26,
-              decoration: BoxDecoration(
-                color: isDark
-                    ? scheme.surfaceContainerHigh
-                    : BlueprintPalette.b50,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                Icons.auto_awesome_rounded,
-                size: 14,
-                color: isDark ? scheme.onSurfaceVariant : BlueprintPalette.text3,
-              ),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                'My Wrapped',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            if (unseen)
+    return Opacity(
+      opacity: isPro ? 1 : 0.72,
+      child: InkWell(
+        onTap: () {
+          // The drawer goes first either way — it covers the recap, and it
+          // would also sit on top of the sheet that stands in for it.
+          final navigator = Navigator.of(context);
+          navigator.pop();
+          if (!isPro) {
+            showProUpsell(navigator.context, ProFeature.wrapped);
+            return;
+          }
+          navigator.push(WrappedScreen.route());
+        },
+        child: Container(
+          constraints: const BoxConstraints(minHeight: Tokens.minTouchTarget),
+          padding: const EdgeInsets.only(left: 26, right: 16),
+          child: Row(
+            children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                width: 26,
+                height: 26,
                 decoration: BoxDecoration(
-                  color: BlueprintPalette.b500,
-                  borderRadius: BorderRadius.circular(100),
+                  color: isDark
+                      ? scheme.surfaceContainerHigh
+                      : BlueprintPalette.b50,
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Text(
-                  'NEW',
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 14,
+                  color:
+                      isDark ? scheme.onSurfaceVariant : BlueprintPalette.text3,
+                ),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  'My Wrapped',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 8.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.6,
-                    color: BlueprintPalette.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurfaceVariant,
                   ),
                 ),
               ),
-          ],
+              if (!isPro)
+                const ProBadge()
+              else if (unseen)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: BlueprintPalette.b500,
+                    borderRadius: BorderRadius.circular(100),
+                  ),
+                  child: const Text(
+                    'NEW',
+                    style: TextStyle(
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                      color: BlueprintPalette.white,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1142,7 +1202,10 @@ class _UpgradeCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 1),
                   Text(
-                    'Unlock all lessons + live classes',
+                    // Names the three Pro-only features rather than "all
+                    // lessons": a student inside their trial already has the
+                    // lessons, so promising them back would read as a mistake.
+                    'Unlock live classes, messages + Wrapped',
                     style: TextStyle(
                       fontSize: 11,
                       color: BlueprintPalette.white.withValues(alpha: 0.75),

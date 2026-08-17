@@ -10,13 +10,13 @@ import '../../data/repositories/schedule_repository.dart';
 import '../../data/services/mission_signals.dart';
 import '../../domain/models/exam_result.dart';
 import '../../domain/models/live_session.dart';
+import '../../domain/pro_features.dart';
 import '../core/state/activity_controller.dart';
-import '../core/state/dashboard_controller.dart';
 import '../core/state/session_controller.dart';
 import '../core/state/xp_service.dart';
 import '../core/theme/app_palette.dart';
-import '../core/toast.dart';
 import '../core/widgets/access_card.dart';
+import '../core/widgets/pro_gate.dart';
 import '../live/livestream_screen.dart';
 import 'widgets/action_rail.dart';
 import 'widgets/hero_desk.dart';
@@ -132,9 +132,11 @@ class _HomeScreenState extends State<HomeScreen> {
   /// banner can sit on screen across the moment a trial runs out.
   Future<void> _joinLive(LiveSession live) async {
     final session = context.read<SessionController>();
-    if (!session.access.active) {
-      showToast('Upgrade to Pro to join live classes');
-      context.read<DashboardController>().select(DashboardView.settings);
+    // The banner is shown to free accounts on purpose — a class happening right
+    // now is the best argument for upgrading — but joining is Pro-only, and a
+    // trial being `active` is not enough.
+    if (!session.access.isPro) {
+      await showProUpsell(context, ProFeature.liveClasses);
       return;
     }
 
