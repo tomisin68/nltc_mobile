@@ -74,20 +74,32 @@ class MockExamRepository {
   /// Two writes, matching the web: the submission document holds the latest
   /// attempt for the admin results view, and a new document in `attempts` keeps
   /// the student's own history.
+  ///
+  /// [displayName] and [elapsedSeconds] are for the admin's results table, not
+  /// for this app — nothing here reads them back. They were missing, so every
+  /// sitting taken on a phone arrived in that table as a blank name and a dash
+  /// where the time should be, while the same exam sat on the website showed
+  /// both. The document id is the uid, but the admin list reads the field, and
+  /// a column of truncated uids is not a register of who sat the paper.
   Future<void> saveSubmission({
     required String examId,
     required String uid,
+    required String displayName,
     required int score,
     required int correct,
     required int total,
+    required int elapsedSeconds,
     required List<SubjectScore> subjectBreakdown,
     required Map<String, String> answers,
     required List<String> questionIds,
   }) async {
     final payload = {
+      'uid': uid,
+      'displayName': displayName,
       'score': score,
       'correct': correct,
       'total': total,
+      'elapsed': elapsedSeconds,
       'subjectBreakdown': subjectBreakdown.map((s) => s.toJson()).toList(),
       'submittedAt': FieldValue.serverTimestamp(),
       // Which questions were served and how they were answered, so the exact

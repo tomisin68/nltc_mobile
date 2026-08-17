@@ -28,8 +28,18 @@ abstract final class MockExamRunner {
   ///
   /// Returns true once a sitting has been submitted, so the caller can refresh.
   static Future<bool?> open(BuildContext context, MockExam exam) async {
-    final uid = context.read<SessionController>().account?.uid;
+    final session = context.read<SessionController>();
+    final uid = session.account?.uid;
     if (uid == null) return null;
+
+    // Captured now, while the profile is in hand — the submitter runs deep
+    // inside the exam screen, long after this context is the right one to ask.
+    // Falls back the same way the website does, so a student with no profile
+    // name still reaches the admin's list as something a person can read.
+    final displayName = session.profile?.displayName ??
+        session.account?.displayName ??
+        session.account?.email ??
+        'Student';
 
     final questions = await _loadPaper(context, exam);
     if (!context.mounted) return null;
@@ -63,6 +73,7 @@ abstract final class MockExamRunner {
             repository: repository,
             exam: exam,
             uid: uid,
+            displayName: displayName,
             questions: served,
             answers: answers,
             durationSeconds: seconds,
@@ -200,6 +211,7 @@ abstract final class MockExamRunner {
     required MockExamRepository repository,
     required MockExam exam,
     required String uid,
+    required String displayName,
     required List<Question> questions,
     required Map<String, String> answers,
     required int durationSeconds,
@@ -234,9 +246,11 @@ abstract final class MockExamRunner {
     await repository.saveSubmission(
       examId: exam.id,
       uid: uid,
+      displayName: displayName,
       score: attempt.score.round(),
       correct: attempt.correct,
       total: questions.length,
+      elapsedSeconds: durationSeconds,
       subjectBreakdown: breakdown,
       answers: answers,
       questionIds: questions.map((q) => q.id).toList(),
