@@ -90,12 +90,41 @@ List<Question> assemblePassagePaper({
   return paper;
 }
 
-/// One complete passage's questions, in the order they were uploaded, or null
-/// when the bank holds no complete one for this slot.
-List<Question>? _pickPassage(
-  List<Question> pool,
+/// Whether [pool] already holds a whole passage for [slot] - every one of its
+/// questions, under a single passage id.
+///
+/// A pool that doesn't is worth topping up from the bank before the paper is
+/// assembled: a device that downloaded English before passages existed, or a
+/// capped fetch that returned six of a cloze passage's ten questions, would
+/// otherwise quietly serve a paper with no passage in it at all.
+bool hasCompletePassage(Iterable<Question> pool, PassageSlot slot) =>
+    _completePassages(pool, slot).isNotEmpty;
+
+/// Every spelling this slot's questions are actually filed under in [pool].
+///
+/// [PassageSlot.topic] is what the network fetch asks Firestore for, and one
+/// spelling is a thin thread to hang a paper on: a bank that files cloze under
+/// "Cloze Test / Gap Filling" answers a query for "Cloze Test" with nothing,
+/// and the slot falls back to ordinary questions without a word. Questions that
+/// did arrive know the name they are filed under, so the fetch can ask for that
+/// instead and survive the topic being renamed.
+Set<String> passageTopicNames(Iterable<Question> pool, PassageSlot slot) {
+  final names = <String>{};
+  for (final q in pool) {
+    if (!slot.claims(q)) continue;
+    final topic = (q.topic ?? '').trim();
+    if (topic.isNotEmpty) names.add(topic);
+  }
+  return names;
+}
+
+/// The passages in [pool] that have all of their questions.
+///
+/// A passage missing some is skipped rather than padded out: three questions on
+/// a passage plus two on nothing is worse than five ordinary questions.
+List<List<Question>> _completePassages(
+  Iterable<Question> pool,
   PassageSlot slot,
-  Random rng,
 ) {
   final groups = <String, List<Question>>{};
   for (final q in pool) {
@@ -103,12 +132,17 @@ List<Question>? _pickPassage(
     if (id == null || id.isEmpty || !slot.claims(q)) continue;
     groups.putIfAbsent(id, () => []).add(q);
   }
+  return groups.values.where((g) => g.length >= slot.length).toList();
+}
 
-  // A passage missing some of its questions is skipped rather than padded out:
-  // three questions on a passage plus two on nothing is worse than five
-  // ordinary questions.
-  final complete =
-      groups.values.where((g) => g.length >= slot.length).toList();
+/// One complete passage's questions, in the order they were uploaded, or null
+/// when the bank holds no complete one for this slot.
+List<Question>? _pickPassage(
+  List<Question> pool,
+  PassageSlot slot,
+  Random rng,
+) {
+  final complete = _completePassages(pool, slot);
   if (complete.isEmpty) return null;
 
   final chosen = [...complete[rng.nextInt(complete.length)]]

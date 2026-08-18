@@ -85,7 +85,10 @@ enum CbtExam {
       length: 5,
     ),
     PassageSlot(
-      topic: 'Cloze Test',
+      // The bank files these under "Cloze Test / Gap Filling"; the draw reads
+      // the spelling back off the questions it fetched, so a rename costs the
+      // paper nothing.
+      topic: 'Cloze Test / Gap Filling',
       keyword: 'cloze',
       start: 15,
       length: 10,

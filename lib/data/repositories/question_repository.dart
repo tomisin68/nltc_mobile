@@ -208,7 +208,12 @@ class QuestionRepository {
           examType: examType,
         );
         if (pool.isNotEmpty) {
-          return _select(pool, count, profile, passages);
+          return _select(
+            await _withPassages(pool, bank, subject, passages),
+            count,
+            profile,
+            passages,
+          );
         }
       }
     }
@@ -343,44 +348,80 @@ class QuestionRepository {
           .toList();
     }
 
-    // The pool above is capped, and a bank the size of English will not fit
-    // inside it — the passage questions would simply never be among the 500
-    // that came back. Each slot's topic is fetched on its own, so the passage
-    // is drawn from all of them rather than from whichever happened to land.
-    if (passages.isNotEmpty) {
-      final seen = pool.map((q) => q.id).toSet();
-      for (final slot in passages) {
-        for (final q in await _passagePool(bank, subject, slot)) {
-          if (seen.add(q.id)) pool.add(q);
-        }
+    return _select(
+      await _withPassages(pool, bank, subject, passages),
+      count,
+      profile,
+      passages,
+    );
+  }
+
+  /// Tops [pool] up with any passage a slot cannot fill from what it already
+  /// has.
+  ///
+  /// Both draws need this. A capped fetch spreads across the whole subject, so
+  /// it lands a handful of questions from thirty different passages and a whole
+  /// one from none of them; a device that downloaded English before passages
+  /// existed has a pool where no question knows its passage at all. Either way
+  /// the slot would quietly fall back to ordinary questions, and the paper the
+  /// student sits would have no comprehension passage in it.
+  ///
+  /// Only the slots that need it are fetched, so a pool that already holds its
+  /// passages — the usual case for a freshly downloaded pack — costs nothing.
+  Future<List<Question>> _withPassages(
+    List<Question> pool,
+    String bank,
+    String subject,
+    List<PassageSlot> passages,
+  ) async {
+    if (passages.isEmpty) return pool;
+
+    final merged = [...pool];
+    final seen = merged.map((q) => q.id).toSet();
+    for (final slot in passages) {
+      if (hasCompletePassage(merged, slot)) continue;
+      for (final q in await _passagePool(bank, subject, slot, pool)) {
+        if (seen.add(q.id)) merged.add(q);
       }
     }
-
-    return _select(pool, count, profile, passages);
+    return merged;
   }
 
   /// Every question filed under one slot's topic, or nothing when the read
   /// fails — a passage that can't be fetched costs the paper its passage, not
   /// the paper.
+  ///
+  /// The topic is asked for under both the name the blueprint carries and every
+  /// name [sample] shows the slot's questions actually filed under, because the
+  /// two drift: the bank spells cloze "Cloze Test / Gap Filling", and a query
+  /// for the blueprint's older "Cloze Test" came back empty — which reads
+  /// exactly like a bank with no cloze passages in it.
   Future<List<Question>> _passagePool(
     String bank,
     String subject,
     PassageSlot slot,
+    List<Question> sample,
   ) async {
-    try {
-      final snap = await _db
-          .collection(bank)
-          .where('subject', isEqualTo: subject)
-          .where('topic', isEqualTo: slot.topic)
-          .limit(_networkPoolCeiling)
-          .get();
-      return snap.docs
-          .map((d) => Question.fromMap(d.id, d.data()))
-          .where((q) => q.isUsable && slot.claims(q))
-          .toList();
-    } catch (_) {
-      return const [];
+    final found = <String, Question>{};
+    for (final topic in {slot.topic, ...passageTopicNames(sample, slot)}) {
+      if (topic.isEmpty) continue;
+      try {
+        final snap = await _db
+            .collection(bank)
+            .where('subject', isEqualTo: subject)
+            .where('topic', isEqualTo: topic)
+            .limit(_networkPoolCeiling)
+            .get();
+        for (final d in snap.docs) {
+          final q = Question.fromMap(d.id, d.data());
+          if (q.isUsable && slot.claims(q)) found[q.id] = q;
+        }
+      } catch (_) {
+        // A topic that can't be read is passed over; another spelling may still
+        // answer, and a slot with nothing behind it falls back on its own.
+      }
     }
+    return found.values.toList();
   }
 
   /// The senior question bank. The junior syllabus lives in its own collection

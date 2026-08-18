@@ -5,9 +5,11 @@ import 'package:provider/provider.dart';
 
 import '../../data/repositories/attempt_repository.dart';
 import '../../data/repositories/mock_exam_repository.dart';
+import '../../data/repositories/question_repository.dart';
 import '../../domain/models/exam_attempt.dart';
 import '../../domain/models/exam_config.dart';
 import '../../domain/models/mock_exam.dart';
+import '../../domain/models/passage_slot.dart';
 import '../../domain/models/question.dart';
 import '../core/state/session_controller.dart';
 import '../core/theme/app_palette.dart';
@@ -144,28 +146,26 @@ abstract final class MockExamRunner {
   }
 
   /// Draws the paper: each subject's questions, to the count the exam asks for.
+  ///
+  /// Goes through the same draw CBT practice uses, so a mock is assembled by one
+  /// set of rules rather than two. That is what puts a JAMB mock's comprehension
+  /// and cloze questions where the real paper puts them — whole passages at 1-5
+  /// and 16-25 — instead of five questions about five passages the student is
+  /// shown none of.
   static Future<List<Question>> _loadPaper(
     BuildContext context,
     MockExam exam,
   ) async {
-    final db = FirebaseFirestore.instance;
+    final questions = context.read<QuestionRepository>();
     final paper = <Question>[];
 
     for (final spec in exam.subjects) {
       try {
-        // Over-fetch then shuffle: Firestore cannot order randomly, and taking
-        // the first N would serve the same paper to everyone.
-        final snap = await db
-            .collection('questions')
-            .where('subject', isEqualTo: spec.subject)
-            .limit(spec.count * 4)
-            .get();
-        final pool = snap.docs
-            .map((d) => Question.fromMap(d.id, d.data()))
-            .where((q) => q.isUsable)
-            .toList()
-          ..shuffle();
-        paper.addAll(pool.take(spec.count));
+        paper.addAll(await questions.drawExam(
+          subject: spec.subject,
+          count: spec.count,
+          passages: _passagesFor(exam, spec),
+        ));
       } catch (_) {
         // A subject that can't be read is skipped rather than failing the whole
         // paper — a three-of-four-subject mock still beats none.
@@ -174,6 +174,16 @@ abstract final class MockExamRunner {
     // Subjects stay grouped, the way a real paper is printed.
     return paper;
   }
+
+  /// The passage blueprint for one line of a mock paper.
+  ///
+  /// A JAMB mock's English section is a UTME English paper and is built like
+  /// one; every other line — a WAEC mock, a mock's Physics — is drawn question
+  /// by question, as it always was.
+  static List<PassageSlot> _passagesFor(MockExam exam, MockExamSubject spec) =>
+      exam.type == 'jamb' && spec.subject.toLowerCase().contains('english')
+          ? CbtExam.jambEnglishPassages
+          : const [];
 
   static Future<List<Question>> _questionsByIds(List<String> ids) async {
     final db = FirebaseFirestore.instance;

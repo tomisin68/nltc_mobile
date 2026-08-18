@@ -49,6 +49,15 @@ void main() {
       expect(slots.last.start, 15);
       expect(slots.last.length, 10);
     });
+
+    test('asks for the topics under the names the bank files them under', () {
+      // Not decoration: these strings are what the fetch queries Firestore for.
+      // Cloze went missing from every paper while this said 'Cloze Test' and the
+      // bank said 'Cloze Test / Gap Filling' — a query that matched no document
+      // reads exactly like a bank with no cloze passages in it.
+      expect(slots.first.topic, 'Reading Comprehension');
+      expect(slots.last.topic, 'Cloze Test / Gap Filling');
+    });
   });
 
   group('assemblePassagePaper', () {
@@ -272,6 +281,64 @@ void main() {
       );
 
       expect(paper.map((x) => x.id), pool.take(40).map((x) => x.id));
+    });
+  });
+
+  // What the draw uses to decide whether it must go back to the bank for a
+  // passage, and what to ask for when it does.
+  group('finding the passages in a pool', () {
+    final comprehension = slots.first;
+    final cloze = slots.last;
+
+    test('reads the topic back off the questions that arrived', () {
+      final pool = [
+        ...grammar(20),
+        ...passage('Cloze Test / Gap Filling', 'cz1', 10),
+      ];
+
+      expect(passageTopicNames(pool, cloze), {'Cloze Test / Gap Filling'});
+      expect(passageTopicNames(pool, comprehension), isEmpty);
+    });
+
+    test('collects every spelling the pool shows', () {
+      final pool = [
+        ...passage('Reading Comprehension', 'rc1', 5),
+        ...passage('Comprehension Passage', 'rc2', 5),
+      ];
+
+      expect(
+        passageTopicNames(pool, comprehension),
+        {'Reading Comprehension', 'Comprehension Passage'},
+      );
+    });
+
+    test('a pool holding a whole passage needs nothing fetched', () {
+      final pool = [...grammar(20), ...passage('Reading Comprehension', 'rc1', 5)];
+
+      expect(hasCompletePassage(pool, comprehension), isTrue);
+      expect(hasCompletePassage(pool, cloze), isFalse);
+    });
+
+    test('a scattering of many passages is not a whole one', () {
+      // What a capped fetch across a big bank actually comes back with: a
+      // handful of questions from thirty passages, and all of none.
+      final pool = [
+        for (var p = 0; p < 6; p++)
+          ...passage('Cloze Test / Gap Filling', 'cz$p', 6),
+      ];
+
+      expect(hasCompletePassage(pool, cloze), isFalse);
+    });
+
+    test('questions that do not know their passage are not one', () {
+      // A pack downloaded before passages existed: the topic is right, the
+      // passage id is empty, and the paper has to go back to the bank for it.
+      final pool = [
+        for (var i = 0; i < 10; i++) q('c$i', topic: 'Cloze Test / Gap Filling'),
+      ];
+
+      expect(hasCompletePassage(pool, cloze), isFalse);
+      expect(passageTopicNames(pool, cloze), {'Cloze Test / Gap Filling'});
     });
   });
 }
