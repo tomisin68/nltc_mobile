@@ -24,7 +24,9 @@ class LocalDatabase {
 
   /// v2 added the two columns adaptive selection and diagram questions need.
   /// v3 added the staging table a download of any size writes through.
-  static const _version = 3;
+  /// v4 added the two columns that keep a comprehension or cloze passage
+  /// together — which passage a question belongs to, and where it sits in it.
+  static const _version = 4;
 
   static Future<LocalDatabase> open() async {
     if (_instance != null) return _instance!;
@@ -57,6 +59,15 @@ class LocalDatabase {
     if (oldVersion < 3) {
       await db.execute(_stagingTable);
     }
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE questions ADD COLUMN passage_id TEXT');
+      await db.execute('ALTER TABLE questions ADD COLUMN passage_order INTEGER');
+      // Staging holds nothing between downloads, so it is rebuilt rather than
+      // migrated. Existing packs keep their questions and simply have no
+      // passages until the subject is downloaded again.
+      await db.execute('DROP TABLE IF EXISTS questions_staging');
+      await db.execute(_stagingTable);
+    }
   }
 
   /// Where a download lands while it is still arriving.
@@ -80,7 +91,9 @@ class LocalDatabase {
       exam_type   TEXT,
       difficulty  TEXT,
       image_url   TEXT,
-      elo_rating  REAL
+      elo_rating  REAL,
+      passage_id  TEXT,
+      passage_order INTEGER
     )
   ''';
 
@@ -98,7 +111,9 @@ class LocalDatabase {
         exam_type   TEXT,
         difficulty  TEXT,
         image_url   TEXT,
-        elo_rating  REAL
+        elo_rating  REAL,
+        passage_id  TEXT,
+        passage_order INTEGER
       )
     ''');
     // Every question read is scoped by subject, and most also by topic.
@@ -202,9 +217,11 @@ class LocalDatabase {
       await txn.execute(
         'INSERT OR REPLACE INTO questions '
         '(id, subject, text, options, answer_key, topic, year, explanation, '
-        ' exam_type, difficulty, image_url, elo_rating) '
+        ' exam_type, difficulty, image_url, elo_rating, passage_id, '
+        ' passage_order) '
         'SELECT id, ?, text, options, answer_key, topic, year, explanation, '
-        '       exam_type, difficulty, image_url, elo_rating '
+        '       exam_type, difficulty, image_url, elo_rating, passage_id, '
+        '       passage_order '
         'FROM questions_staging',
         [subject],
       );

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../domain/models/exam_config.dart';
+import '../../domain/models/passage_slot.dart';
 import '../../domain/models/question.dart';
 import '../../domain/models/subject.dart';
 import '../services/local_database.dart';
@@ -174,6 +175,10 @@ class QuestionRepository {
   /// been served, so those are held back until the fresh ones run out. Matches
   /// `drawPaper` on the website, so the two surfaces don't repeat each other.
   ///
+  /// [passages] pins whole passages to fixed positions — what a UTME English
+  /// paper does with its comprehension and cloze sets. Everything outside those
+  /// positions is still drawn independently at random.
+  ///
   /// Prefers the downloaded pack: it is instant and works with no signal. Falls
   /// back to Firestore only when the subject hasn't been downloaded, and that
   /// path fails loudly offline rather than starting an exam it can't fill.
@@ -185,6 +190,7 @@ class QuestionRepository {
     String? examType,
     String bank = seniorBank,
     LearningProfile? profile,
+    List<PassageSlot> passages = const [],
   }) async {
     final wantedTopics = <String>{
       if (topic != null && topic.isNotEmpty) topic,
@@ -202,7 +208,7 @@ class QuestionRepository {
           examType: examType,
         );
         if (pool.isNotEmpty) {
-          return _select(pool, count, profile);
+          return _select(pool, count, profile, passages);
         }
       }
     }
@@ -214,6 +220,7 @@ class QuestionRepository {
       examType: examType,
       bank: bank,
       profile: profile,
+      passages: passages,
     );
   }
 
@@ -238,6 +245,7 @@ class QuestionRepository {
         topics: request.topics,
         bank: bank,
         profile: profile,
+        passages: request.passages,
       );
       if (drawn.isEmpty) continue;
 
@@ -255,8 +263,26 @@ class QuestionRepository {
     return DrawnPaper(questions: questions, sections: sections);
   }
 
-  /// Draws [count] questions at random from a candidate pool.
+  /// Picks the questions for one section, honouring any passage slots.
+  ///
+  /// With no slots this is the plain random draw every other subject uses.
   List<Question> _select(
+    List<Question> pool,
+    int count,
+    LearningProfile? profile, [
+    List<PassageSlot> passages = const [],
+  ]) {
+    if (passages.isEmpty) return _random(pool, count, profile);
+    return assemblePassagePaper(
+      pool: pool,
+      count: count,
+      slots: passages,
+      draw: (candidates, n) => _random(candidates, n, profile),
+    );
+  }
+
+  /// Draws [count] questions at random from a candidate pool.
+  List<Question> _random(
     List<Question> pool,
     int count,
     LearningProfile? profile,
@@ -281,6 +307,7 @@ class QuestionRepository {
     required String bank,
     String? examType,
     LearningProfile? profile,
+    List<PassageSlot> passages = const [],
   }) async {
     // A single topic filters server-side; several are filtered here, because
     // Firestore's `whereIn` and an inequality on another field can't share a
@@ -315,7 +342,45 @@ class QuestionRepository {
           .where((q) => (q.examType ?? '').toLowerCase() == wantedType)
           .toList();
     }
-    return _select(pool, count, profile);
+
+    // The pool above is capped, and a bank the size of English will not fit
+    // inside it — the passage questions would simply never be among the 500
+    // that came back. Each slot's topic is fetched on its own, so the passage
+    // is drawn from all of them rather than from whichever happened to land.
+    if (passages.isNotEmpty) {
+      final seen = pool.map((q) => q.id).toSet();
+      for (final slot in passages) {
+        for (final q in await _passagePool(bank, subject, slot)) {
+          if (seen.add(q.id)) pool.add(q);
+        }
+      }
+    }
+
+    return _select(pool, count, profile, passages);
+  }
+
+  /// Every question filed under one slot's topic, or nothing when the read
+  /// fails — a passage that can't be fetched costs the paper its passage, not
+  /// the paper.
+  Future<List<Question>> _passagePool(
+    String bank,
+    String subject,
+    PassageSlot slot,
+  ) async {
+    try {
+      final snap = await _db
+          .collection(bank)
+          .where('subject', isEqualTo: subject)
+          .where('topic', isEqualTo: slot.topic)
+          .limit(_networkPoolCeiling)
+          .get();
+      return snap.docs
+          .map((d) => Question.fromMap(d.id, d.data()))
+          .where((q) => q.isUsable && slot.claims(q))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// The senior question bank. The junior syllabus lives in its own collection
@@ -366,18 +431,27 @@ class SectionRequest {
     required this.name,
     required this.count,
     this.topics = const [],
+    this.passages = const [],
   });
 
   /// Builds a request from a decorated subject, so the key and display name can
   /// never drift apart.
-  SectionRequest.of(Subject subject, this.count, {this.topics = const []})
-      : key = subject.key,
+  SectionRequest.of(
+    Subject subject,
+    this.count, {
+    this.topics = const [],
+    this.passages = const [],
+  })  : key = subject.key,
         name = subject.name;
 
   final String key;
   final String name;
   final int count;
   final List<String> topics;
+
+  /// Runs of questions that each have to come from one passage. Empty for
+  /// every section but UTME English.
+  final List<PassageSlot> passages;
 }
 
 /// A drawn paper: the flat question list, and where each subject starts in it.

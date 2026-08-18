@@ -23,6 +23,8 @@ class Question {
     this.difficulty,
     this.imageUrl,
     this.eloRating,
+    this.passageId,
+    this.passageOrder,
   });
 
   final String id;
@@ -50,6 +52,18 @@ class Question {
   /// The adaptive engine's rating for this question, when it has scored one.
   /// Null means fall back to the difficulty label's seed rating.
   final double? eloRating;
+
+  /// Which passage this question belongs to, for the comprehension and cloze
+  /// questions that only make sense alongside the others about the same text.
+  /// Null on every other question, which is nearly all of them.
+  final String? passageId;
+
+  /// Where this question sits inside its passage, counted from 0.
+  ///
+  /// Stored rather than inferred: cloze gaps have to run in the order the
+  /// passage reads, and Firestore returns documents in no order worth relying
+  /// on. Written by the spreadsheet import from the row's position in the file.
+  final int? passageOrder;
 
   static const optionKeys = ['a', 'b', 'c', 'd'];
 
@@ -102,6 +116,12 @@ class Question {
       imageUrl: _text(m['image']) ?? _text(m['imageUrl']),
       eloRating:
           m['eloRating'] is num ? (m['eloRating'] as num).toDouble() : null,
+      passageId: _text(m['passageId']) ?? _text(m['passage_id']),
+      // Firestore hands a whole number back as an int or a double depending on
+      // how it was written, and the import writes it as a number either way.
+      passageOrder: m['passageOrder'] is num
+          ? (m['passageOrder'] as num).toInt()
+          : int.tryParse('${m['passageOrder'] ?? ''}'),
     );
   }
 
@@ -134,6 +154,8 @@ class Question {
         'difficulty': difficulty,
         'image_url': imageUrl,
         'elo_rating': eloRating,
+        'passage_id': passageId,
+        'passage_order': passageOrder,
       };
 
   factory Question.fromRow(Map<String, Object?> r) => Question(
@@ -149,6 +171,8 @@ class Question {
         difficulty: r['difficulty'] as String?,
         imageUrl: r['image_url'] as String?,
         eloRating: (r['elo_rating'] as num?)?.toDouble(),
+        passageId: r['passage_id'] as String?,
+        passageOrder: (r['passage_order'] as num?)?.toInt(),
       );
 
   static Map<String, String> _decodeOptions(String? raw) {

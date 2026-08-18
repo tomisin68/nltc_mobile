@@ -1,3 +1,5 @@
+import 'passage_slot.dart';
+
 /// How a sitting behaves once it starts.
 enum ExamMode {
   /// Timed, no feedback until submission — the real thing.
@@ -70,6 +72,25 @@ enum CbtExam {
   /// English carries 60 questions in UTME; every other subject carries 40.
   static const jambEnglishCount = 60;
   static const jambSubjectCount = 40;
+
+  /// Where the two passage-based sets sit in a UTME English paper: the
+  /// comprehension passage is questions 1-5 and the cloze passage is 16-25,
+  /// each drawn whole from one passage rather than question by question. The
+  /// other 45 are drawn independently, as every other subject's are.
+  static const jambEnglishPassages = [
+    PassageSlot(
+      topic: 'Reading Comprehension',
+      keyword: 'comprehension',
+      start: 0,
+      length: 5,
+    ),
+    PassageSlot(
+      topic: 'Cloze Test',
+      keyword: 'cloze',
+      start: 15,
+      length: 10,
+    ),
+  ];
 
   /// Fixed for JAMB, a sensible default elsewhere, and null where the student
   /// chooses. Mirrors `DEFAULT_TIMERS` and the JAMB branch on the web.

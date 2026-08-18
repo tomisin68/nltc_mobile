@@ -104,7 +104,13 @@ class _JambSetupSheetState extends State<JambSetupSheet> {
       final english = _english;
       final requests = <SectionRequest>[
         if (english != null)
-          SectionRequest.of(english, CbtExam.jambEnglishCount),
+          // Comprehension and cloze come as whole passages, pinned where the
+          // real paper puts them; the rest of English is drawn at random.
+          SectionRequest.of(
+            english,
+            CbtExam.jambEnglishCount,
+            passages: CbtExam.jambEnglishPassages,
+          ),
         for (final key in _picked)
           ...widget.subjects
               .where((s) => s.key == key)
